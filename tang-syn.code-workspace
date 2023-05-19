@@ -8,6 +8,12 @@
 		},
 		{
 			"path": "../poetry"
+		},
+		{
+			"path": "../trocr-hand"
+		},
+		{
+			"path": "../unilm/trocr"
 		}
 	],
 	"settings": {}
