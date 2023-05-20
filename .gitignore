@@ -4,6 +4,11 @@ __pycache__
 
 hw_data
 hw_data.tar
+data
+aug
+
+labels
+labels-src
 
 output
 images
