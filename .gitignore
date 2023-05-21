@@ -18,3 +18,5 @@ images
 *.txt
 
 checkpoints
+logs
+models
