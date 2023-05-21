@@ -16,3 +16,5 @@ images
 
 *.tsv
 *.txt
+
+checkpoints
