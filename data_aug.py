@@ -130,40 +130,15 @@ class Erosion(torch.nn.Module):
         return self.__class__.__name__ + '(kernel={})'.format(self.kernel)
 
 
-# class Underline(torch.nn.Module):
-#     def __init__(self, threshold=0.5):
-#         super().__init__()
-#         self.threshold = threshold
-
-#     def forward(self, img_tensor):
-#         grayscale = rgb_to_grayscale(img_tensor, num_output_channels=1).squeeze()
-#         black_pixels = torch.where(grayscale < self.threshold)
-#         # print(black_pixels)
-#         try:
-#             y1 = int(torch.max(black_pixels[0]))
-#             x0 = int(torch.min(black_pixels[1]))
-#             x1 = int(torch.max(black_pixels[1]))
-#         except:
-#             return img_tensor
-#         underline_mask = torch.zeros_like(img_tensor)
-#         for x in range(x0, x1):
-#             for y in range(y1, y1 - 3, -1):
-#                 try:
-#                     underline_mask[:, y, x] = 1.0
-#                 except:
-#                     continue
-#         img_tensor = img_tensor * (1 - underline_mask) + underline_mask * 0.0
-#         return img_tensor
-
 class Underline(torch.nn.Module):
+
     def __init__(self, threshold=0.5):
         super().__init__()
         self.threshold = threshold
 
     def forward(self, img_tensor):
         batch_size = img_tensor.shape[0]
-        grayscale = rgb_to_grayscale(
-            img_tensor, num_output_channels=1)
+        grayscale = rgb_to_grayscale(img_tensor, num_output_channels=1)
 
         underline_mask = torch.zeros_like(img_tensor)
 
@@ -201,19 +176,19 @@ def build_data_aug(size, mode, resnet=False, resizepad=False, device=None):
         norm_tfm = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
     else:
-        norm_tfm = transforms.Normalize(
-            mean=[0.5], std=[0.5])
+        norm_tfm = transforms.Normalize(mean=[0.5], std=[0.5])
     if resizepad:
         resize_tfm = ResizePad(imgH=size[0], imgW=size[1])
     else:
-        resize_tfm = transforms.Resize(size,
-                                       interpolation=InterpolationMode.BILINEAR, antialias=True)
+        resize_tfm = transforms.Resize(
+            size, interpolation=InterpolationMode.BILINEAR, antialias=True)
     if mode == 'train':
         return transforms.Compose([
             transforms.ToImageTensor(),
             transforms.ConvertImageDtype(dtype=torch.float32),
+            transforms.Resize(128, interpolation=InterpolationMode.BILINEAR, antialias=True),
+            # WeightedRandomChoice([
             transforms.RandomChoice([
-                # WeightedRandomChoice([
                 # transforms.RandomHorizontalFlip(p=1),
                 transforms.RandomRotation(degrees=(-10, 10),
                                           expand=True,
@@ -222,7 +197,8 @@ def build_data_aug(size, mode, resnet=False, resizepad=False, device=None):
                 Dilation(3, device),
                 Erosion(3, device),
                 transforms.Resize((size[0] // 3, size[1] // 3),
-                                  interpolation=InterpolationMode.NEAREST, antialias=False),
+                                  interpolation=InterpolationMode.NEAREST,
+                                  antialias=False),
                 Underline(),
                 KeepOriginal(),
             ]),
@@ -231,32 +207,35 @@ def build_data_aug(size, mode, resnet=False, resizepad=False, device=None):
             transforms.ToImagePIL()
         ])
     else:
-        return transforms.Compose(
-            [resize_tfm, norm_tfm])
+        return transforms.Compose([
+            resize_tfm,
+            norm_tfm
+        ])
 
 
 def build_data_aug_v1(size, mode, resnet=False, resizepad=False):
     if resnet:
-        norm_tfm = transforms.Normalize(
-            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        norm_tfm = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
     else:
         norm_tfm = transforms.Normalize(0.5, 0.5)
     if resizepad:
         resize_tfm = ResizePad(imgH=size[0], imgW=size[1])
     else:
-        resize_tfm = transforms.Resize(
-            size, interpolation=InterpolationMode.BICUBIC)
+        resize_tfm = transforms.Resize(size,
+                                       interpolation=InterpolationMode.BICUBIC)
     if mode == 'train':
         return transforms.Compose([
             WeightedRandomChoice([
                 # transforms.RandomHorizontalFlip(p=1),
-                transforms.RandomRotation(
-                    degrees=(-10, 10), expand=True, fill=255),
+                transforms.RandomRotation(degrees=(-10, 10),
+                                          expand=True,
+                                          fill=255),
                 transforms.GaussianBlur(3),
                 Dilation(3),
                 Erosion(3),
-                transforms.Resize(
-                    size // 3, interpolation=InterpolationMode.NEAREST),
+                transforms.Resize(size // 3,
+                                  interpolation=InterpolationMode.NEAREST),
                 Underline(),
                 KeepOriginal(),
             ]),
@@ -265,11 +244,8 @@ def build_data_aug_v1(size, mode, resnet=False, resizepad=False):
             norm_tfm
         ])
     else:
-        return transforms.Compose([
-            resize_tfm,
-            transforms.ToTensor(),
-            norm_tfm
-        ])
+        return transforms.Compose(
+            [resize_tfm, transforms.ToTensor(), norm_tfm])
 
 
 class OptForDataAugment:
