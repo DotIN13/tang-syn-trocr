@@ -1,4 +1,5 @@
 import torchvision.transforms.v2 as transforms
+# from torchvision import transforms
 # from torchvision.transforms.functional import InterpolationMode
 from torchvision.transforms.functional import rgb_to_grayscale
 from PIL import Image, ImageFilter
@@ -241,7 +242,8 @@ def build_data_aug_v1(size, mode, resnet=False, resizepad=False):
             ]),
             resize_tfm,
             transforms.ToTensor(),
-            norm_tfm
+            norm_tfm,
+            transforms.ToPILImage()
         ])
     else:
         return transforms.Compose(

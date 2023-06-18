@@ -3,7 +3,6 @@ from os import path
 
 import numpy as np
 import pandas as pd
-from pynvml import *
 import torch
 from torch.utils.data import Dataset
 import evaluate
@@ -19,13 +18,6 @@ from torch.utils.data import Subset
 
 FULL_TRAINING = False
 MAX_LENGTH = 64
-
-
-def print_gpu_utilization():
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(0)
-    info = nvmlDeviceGetMemoryInfo(handle)
-    print(f"GPU memory occupied: {info.used//1024**2} MB.")
 
 
 def print_summary(result):
@@ -197,8 +189,8 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
         evaluation_strategy="steps",
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
+        per_device_train_batch_size=24,
+        per_device_eval_batch_size=24,
         num_train_epochs=3,
         fp16=True,
         learning_rate=4e-5,
@@ -255,8 +247,10 @@ def save_checkpoint(trainer):
 
 
 if __name__ == "__main__":
+    # processor = TrOCRProcessor.from_pretrained(
+    #     "microsoft/trocr-base-handwritten")
     processor = TrOCRProcessor.from_pretrained(
-        "microsoft/trocr-base-handwritten")
+        "models/epoch-1")
     model, tokenizer = load_model()
     compute_metrics = build_metrics(tokenizer)
     train_dataset, eval_dataset = load_datasets(processor, tokenizer)
