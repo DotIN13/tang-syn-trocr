@@ -1,6 +1,8 @@
 import os
 from os import path
+import random
 
+import cv2
 import numpy as np
 import pandas as pd
 import torch
@@ -13,10 +15,11 @@ from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcesso
 from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
 from transformers import default_data_collator
 
-from data_aug import build_data_aug
+from data_aug_v2 import build_data_aug
 from torch.utils.data import Subset
+from tang_syn import synthesize
 
-FULL_TRAINING = False
+FULL_TRAINING = True
 MAX_LENGTH = 64
 
 
@@ -31,8 +34,8 @@ def load_model():
     tokenizer = None
 
     if FULL_TRAINING:
-        vision_hf_model = 'facebook/deit-base-distilled-patch16-384'
-        nlp_hf_model = "hfl/chinese-macbert-base"
+        vision_hf_model = 'microsoft/beit-base-patch16-384'
+        nlp_hf_model = "uer/roberta-base-word-chinese-cluecorpussmall"
 
         # Reference: https://github.com/huggingface/transformers/issues/15823
         # initialize the encoder from a pretrained ViT and the decoder from a pretrained BERT model.
@@ -57,7 +60,7 @@ def load_model():
         model.config.early_stopping = True
         model.config.no_repeat_ngram_size = 3
         model.config.length_penalty = 2.0
-        model.config.num_beams = 4
+        model.config.num_beams = 6
 
     return model, tokenizer
 
@@ -82,18 +85,31 @@ class OCRDataset(Dataset):
         self.max_target_length = max_target_length
         self.tokenizer = tokenizer
         self.df = self.build_df()
+        self.df_len = len(self.df)
+        self.len = 12000000
 
     def __len__(self):
-        return len(self.df)
+        return self.len
 
     def __getitem__(self, idx):
-        # get file name + text
-        file_name = self.df["file_name"][idx]
-        text = self.df['text'][idx]
-        # prepare image (i.e. resize + normalize)
-        image = Image.open(path.join(self.dataset_dir,
-                                     file_name)).convert("RGB")
-        if self.mode == "train" and self.transform:
+
+        # Thirty percent of the time, use existing dataset
+        if idx < self.df_len:
+            text = self.df['text'][idx]
+            # get file name + text
+            file_name = self.df["file_name"][idx]
+            # prepare image (i.e. resize + normalize)
+            image = Image.open(path.join(self.dataset_dir,
+                                         file_name)).convert("RGB")
+        # 70% percent of the time, use online generated data
+        else:
+            text_idx = int(idx / self.len * (self.df_len - 1))
+            text = self.df['text'][text_idx]
+            text, bgr_image = synthesize(text)
+            rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
+            image = Image.fromarray(rgb_image)
+
+        if self.transform:
             image = self.transform(image)
 
         pixel_values = self.processor(image, return_tensors="pt").pixel_values
@@ -117,7 +133,7 @@ class OCRDataset(Dataset):
 
     def build_df(self):
         li = []
-        for root, dirs, files in os.walk(self.labels_dir):
+        for root, _dirs, files in os.walk(self.labels_dir):
             for file in files:  # Loop through the dataset tsvfiles
                 if not file.endswith(".tsv"):
                     continue
@@ -138,7 +154,7 @@ def load_datasets(processor, tokenizer):
                                tokenizer=tokenizer,
                                processor=processor,
                                mode="train",
-                               transform=build_data_aug((64, 1024), "train"),
+                               transform=build_data_aug(32, "train"),
                                max_target_length=MAX_LENGTH)
 
     # Define the number of samples to keep in eval dataset
@@ -189,8 +205,8 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
         evaluation_strategy="steps",
-        per_device_train_batch_size=24,
-        per_device_eval_batch_size=24,
+        per_device_train_batch_size=28,
+        per_device_eval_batch_size=28,
         num_train_epochs=3,
         fp16=True,
         learning_rate=4e-5,
@@ -200,10 +216,11 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         logging_steps=100,
         save_strategy="steps",
         save_total_limit=5,
-        save_steps=10000,
-        eval_steps=10000,
+        save_steps=1000,
+        eval_steps=1000,
         resume_from_checkpoint="./checkpoints/",
-        dataloader_num_workers=10)
+        dataloader_num_workers=6,
+        optim="adamw_torch")
 
     # instantiate trainer
     return Seq2SeqTrainer(
@@ -218,7 +235,6 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
 
 
 def save_checkpoint(trainer):
-    import random
     SCALER_NAME = "scaler.pt"
     SCHEDULER_NAME = "scheduler.pt"
     OPTIMIZER_NAME = "optimizer.pt"
@@ -250,14 +266,14 @@ if __name__ == "__main__":
     # processor = TrOCRProcessor.from_pretrained(
     #     "microsoft/trocr-base-handwritten")
     processor = TrOCRProcessor.from_pretrained(
-        "models/epoch-1")
+        "microsoft/trocr-base-handwritten")
     model, tokenizer = load_model()
     compute_metrics = build_metrics(tokenizer)
     train_dataset, eval_dataset = load_datasets(processor, tokenizer)
     trainer = init_trainer(model, tokenizer, compute_metrics, train_dataset,
                            eval_dataset)
     try:
-        result = trainer.train(resume_from_checkpoint=True)
+        result = trainer.train()
         print_summary(result)
     except Exception as err:
         save_checkpoint(trainer)

@@ -1,0 +1,33 @@
+# Custom
+margin_left: 10
+margin_right: 10
+text_color: [255, 0, 0]
+bg_color: [250, 250, 250]
+box_color: [0, 0, 0]
+
+graph_grid: false
+graph_grid_size: 10
+chinese_grid: false
+chinese_grid_padding: 10
+
+# Static
+height: 32
+font_size: 20
+chinese_grid_extra_left: 3
+chinese_grid_extra_right: 3
+
+gap_mean: 0.0
+gap_std_dev: 1.8
+base_gap_min: 1
+base_gap_max: 5
+
+base_skew_min: -4.0
+base_skew_max: 4.0
+skew_mean: 1.0
+skew_std_dev: 1.5
+
+elastic_transform: false
+elastic_sigma_ratio: 0.025
+elastic_alpha_ratio: 2
+
+simplified_fonts_only: true

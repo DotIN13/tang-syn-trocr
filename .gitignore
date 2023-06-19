@@ -19,4 +19,7 @@ images
 
 checkpoints
 logs
+*.log
 models
+
+fonts
