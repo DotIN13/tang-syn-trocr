@@ -1,11 +1,46 @@
 import os
 import yaml
 import random
-import numpy as np
+import warnings
 
 from tqdm import tqdm
 import numpy as np
 import pygame
+from fontTools.ttLib import TTFont
+
+warnings.filterwarnings('ignore', category=UserWarning, module='fontTools.ttLib.tables._p_o_s_t')
+
+FALLBACK_FONT_NAMES = [
+    "NotoSansCJKsc-VF.ttf",
+    "NotoSansCJKhk-VF.ttf",
+    "NotoSansCJKjp-VF.ttf",
+    "NotoSansCJKkr-VF.ttf",
+    "NotoSansCJKtc-VF.ttf",
+    "Arial-Unicode-MS.ttf",
+    "segoeui.ttf",
+    "segoeuib.ttf",
+    "segoeuii.ttf",
+    "segoeuil.ttf",
+    "segoeuisl.ttf",
+    "segoeuiz.ttf",
+    "seguibl.ttf",
+    "seguibli.ttf",
+    "seguihis.ttf",
+    "seguili.ttf",
+    "seguisb.ttf",
+    "seguisbi.ttf",
+    "seguisli.ttf",
+    "seguisym.ttf",
+    "seguiemj.ttf",
+]
+
+
+def can_render(font, character):
+    for table in font['cmap'].tables:
+        if ord(character) in table.cmap:
+            return True
+
+    return False
 
 
 def apply_color_jitter(color, std=15):
@@ -106,24 +141,36 @@ class TextlineSynthesisConfig:
     pygame.freetype.init()
 
     FONTS = []
+    TTFONTS = []
+    FALLBACK_FONT_IDS = []
     for file in tqdm(os.listdir("fonts")):
-        if file.endswith((".ttf", ".otf")):
+        if file.lower().endswith((".ttf", ".otf")):
             if DEFAULT_CONFIG["simplified_fonts_only"] and "FW" in file:
                 continue
 
+            pth = os.path.join("fonts", file)
             FONTS.append(pygame.freetype.Font(
-                os.path.join("fonts", file), DEFAULT_CONFIG["font_size"]))
+                pth, DEFAULT_CONFIG["font_size"]))
+            TTFONTS.append(TTFont(pth))
+
+            if file in FALLBACK_FONT_NAMES:
+                FALLBACK_FONT_IDS.append(len(FONTS) - 1)
+
+    print(f"Usable font: {len(FONTS)}")
 
     def __init__(self, config={}):
         self.config = self.DEFAULT_CONFIG.copy()
-        self.font = random.choice(self.FONTS)
+        self.config["font_id"] = random.randint(0, len(self.FONTS) - 1)
+        self.config["fonts"] = self.FONTS
+        self.config["ttfonts"] = self.TTFONTS
+        self.config["fallback_font_ids"] = self.FALLBACK_FONT_IDS
         self.config.update(config)
 
     def __getattr__(self, item):
         if item in self.config:
             return self.config[item]
 
-        raise AttributeError(f"'MyClass' object has no attribute '{item}'")
+        raise AttributeError(f"Object has no attribute '{item}'")
 
     @classmethod
     def random_config(cls, **kwargs):
@@ -141,7 +188,8 @@ class TextlineSynthesisConfig:
         random_config['graph_grid_size'] = np.random.randint(5, 15)
         random_config['chinese_grid'] = kwargs.get("chinese_grid", False)
         random_config['chinese_grid_padding'] = np.random.randint(8, 12)
-        random_config['elastic_transform'] = kwargs.get("elastic_transform", False)
+        random_config['elastic_transform'] = kwargs.get(
+            "elastic_transform", False)
         return cls(random_config)
 
     # Optional: add a method to modify configuration values

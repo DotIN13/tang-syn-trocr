@@ -86,10 +86,10 @@ class OCRDataset(Dataset):
         self.tokenizer = tokenizer
         self.df = self.build_df()
         self.df_len = len(self.df)
-        self.len = 12000000
+        self.arbitrary_len = 12000000
 
     def __len__(self):
-        return self.len
+        return self.arbitrary_len
 
     def __getitem__(self, idx):
 
@@ -103,7 +103,7 @@ class OCRDataset(Dataset):
                                          file_name)).convert("RGB")
         # 70% percent of the time, use online generated data
         else:
-            text_idx = int(idx / self.len * (self.df_len - 1))
+            text_idx = int(idx / self.arbitrary_len * (self.df_len - 1))
             text = self.df['text'][text_idx]
             text, bgr_image = synthesize(text)
             rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
@@ -146,6 +146,12 @@ class OCRDataset(Dataset):
         return pd.concat(li, axis=0, ignore_index=True)
 
 
+class EvalDataset(OCRDataset):
+
+    def __len__(self):
+        return len(self.df)
+
+
 def load_datasets(processor, tokenizer):
     dataset_dir = 'dataset/data'
 
@@ -158,17 +164,17 @@ def load_datasets(processor, tokenizer):
                                max_target_length=MAX_LENGTH)
 
     # Define the number of samples to keep in eval dataset
-    num_samples = 100
 
-    eval_dataset = OCRDataset(dataset_dir=dataset_dir,
-                              labels_dir="dataset/labels/test",
-                              tokenizer=tokenizer,
-                              processor=processor,
-                              mode="eval",
-                              transform=None,
-                              max_target_length=MAX_LENGTH)
+    eval_dataset = EvalDataset(dataset_dir=dataset_dir,
+                               labels_dir="dataset/labels/test",
+                               tokenizer=tokenizer,
+                               processor=processor,
+                               mode="eval",
+                               transform=None,
+                               max_target_length=MAX_LENGTH)
 
     # Create a random subset of the dataset
+    num_samples = 100
     subset_indices = torch.randperm(len(eval_dataset))[:num_samples]
     eval_dataset = Subset(eval_dataset, subset_indices.tolist())
 
@@ -216,11 +222,14 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         logging_steps=100,
         save_strategy="steps",
         save_total_limit=5,
-        save_steps=1000,
-        eval_steps=1000,
+        save_steps=2000,
+        eval_steps=2000,
         resume_from_checkpoint="./checkpoints/",
         dataloader_num_workers=6,
-        optim="adamw_torch")
+        optim="adamw_torch",
+        lr_scheduler_type="linear",
+        warmup_steps=4000,
+    )
 
     # instantiate trainer
     return Seq2SeqTrainer(

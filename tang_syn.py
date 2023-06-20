@@ -9,8 +9,7 @@ import pygame.freetype
 from scipy.ndimage import gaussian_filter, map_coordinates
 import matplotlib.pyplot as plt
 
-
-from tang_syn_config import TextlineSynthesisConfig, generate_random_config
+from tang_syn_config import TextlineSynthesisConfig, generate_random_config, can_render
 
 
 def is_chinese(text):
@@ -35,10 +34,9 @@ def alpha_blend_with_mask(foreground, background, mask):  # modified func from l
     # Add the masked foreground and background.
     return cv2.add(foreground, background).astype(np.uint8)
 
-# Perform the elastic deformation
-
 
 def elastic_transform(image, alpha, sigma):
+    """Perform the elastic deformation"""
     random_state = np.random.RandomState(None)
 
     shape = image.shape
@@ -57,6 +55,46 @@ def elastic_transform(image, alpha, sigma):
     return distored_image.reshape(image.shape)
 
 
+def apply_mask_with_ellipses(image, num_ellipses=5):
+    # Assumes image is in BGR format and the last channel is Alpha (transparency)
+    bgr = image[:, :, :3]
+    alpha = image[:, :, 3]
+
+    # creates a white mask of the same size as the bgr
+    mask = np.ones(bgr.shape, dtype=bgr.dtype) * 255
+
+    h, w = bgr.shape[:2]
+
+    for _ in range(num_ellipses):
+        # Generate random parameters for the ellipse
+        center = (random.randint(0, w), random.randint(0, h))
+        # limiting the size of the ellipse to 1/4th of the image dimensions
+        axes = (random.randint(0, w // 4), random.randint(0, h))
+        angle = random.randint(0, 360)
+        startAngle = random.randint(0, 360)
+        # making sure the endAngle is greater than the startAngle
+        endAngle = random.randint(startAngle, startAngle + 180)
+        color = (random.randint(0, 255), random.randint(0, 255),
+                 random.randint(0, 255))  # generates a random BGR color
+        thickness = -1
+
+        # Draw the ellipse on the mask
+        cv2.ellipse(mask, center, axes, angle, startAngle,
+                    endAngle, color, thickness)
+
+    # apply Gaussian blur to the mask to make the ellipses blend smoothly
+    mask = cv2.GaussianBlur(mask, (15, 15), 10)
+
+    # Only apply the mask to non-transparent (opaque) parts of the image
+    for i in range(3):  # For each BGR channel
+        bgr[:, :, i] = cv2.bitwise_and(bgr[:, :, i], mask[:, :, i], mask=alpha)
+
+    # Combine the BGR and alpha channel back together
+    image = cv2.merge([bgr, alpha])
+
+    return image
+
+
 class TextlineSynthesis:
     def __init__(self, config):
         self.config = config
@@ -69,18 +107,14 @@ class TextlineSynthesis:
     def draw_text(self, message):
         """Draw text on a surface with transparent background"""
 
-        # Get font from config
-        font = self.config.font
+        # Calculate maximum ascent and descent for baseline alignment
+        fonts, font_metrics = self.generate_fonts_and_metrics(message)
 
         # Run is_chinese on all of the characters
         is_chinese_char = [is_chinese(char) for char in message]
 
-        # Calculate maximum ascent and descent for baseline alignment
-        metrics = font.get_metrics(message, size=self.config.font_size)
-        message = "".join(char for i, char in enumerate(message) if metrics[i])
-        metrics = [metric for metric in metrics if metric]
-
-        text_height = max_descent = max(metric[3] for metric in metrics)
+        text_height = max_descent = max(
+            font_metric[3] for font_metric in font_metrics)
 
         # Set grid size
         grid_size = self.get_grid_size()
@@ -118,10 +152,15 @@ class TextlineSynthesis:
                 self.config.skew_mean, self.config.skew_std_dev)
             skew = int(base_skew + skew)
 
+            font = fonts[i]
+            style = random.choices(
+                [pygame.freetype.STYLE_NORMAL, pygame.freetype.STYLE_STRONG], weights=[0.2, 0.8], k=1)[0]
+            font.strength = random.uniform(0.0, 1 / 24)
+
             # Render the character
             text_surface, _ = font.render(
                 char, self.config.text_color, (255, 255, 255, 0), size=self.config.font_size,
-                style=pygame.freetype.STYLE_STRONG, rotation=skew)
+                style=style, rotation=skew)
 
             char_pos_x = pos_x
 
@@ -138,7 +177,7 @@ class TextlineSynthesis:
                     char_pos_x += char_padding_left
 
             # Correct the y-coordinate for baseline alignment
-            char_pos_y = pos_y + max_descent - metrics[i][3]
+            char_pos_y = pos_y + max_descent - font_metrics[i][3]
 
             # Store the text surface and its position
             text_surfaces_and_positions.append(
@@ -229,6 +268,40 @@ class TextlineSynthesis:
         sigma = image.shape[1] * self.config.elastic_sigma_ratio
         return elastic_transform(image, alpha, sigma)
 
+    def generate_fonts_and_metrics(self, text):
+        """Generate fonts and metrics list with fallbacks for the given text"""
+
+        fonts = []
+        metrics = []
+
+        for char in text:
+
+            font = None
+            metric = None
+
+            for font_id in [self.config.font_id, *self.config.fallback_font_ids]:
+                ttfont = self.config.ttfonts[font_id]
+                font = self.config.fonts[font_id]
+
+                if can_render(ttfont, char):
+                    metric = font.get_metrics(
+                        char, size=self.config.font_size)[0]
+
+                if metric is not None:
+                    # print(char, font.name)
+                    break
+
+            if font is None or metric is None:
+                font = self.config.fonts[self.config.fallback_font_ids[0]]
+                metric = font.get_metrics("是", size=self.config.font_size)[0]
+
+            fonts.append(font)
+            metrics.append(metric)
+
+        # print(text, len(text), metrics, len(metrics))
+
+        return fonts, metrics
+
 
 def synthesize(message):
     if message == "":
@@ -241,6 +314,9 @@ def synthesize(message):
     message, surface = text_syn.draw_text(message)
     size = surface.get_size()
     fg = text_syn.surf2bgra(surface)
+
+    fg = apply_mask_with_ellipses(fg)
+
     fg = text_syn.apply_elastic_transform(fg)
     bg = text_syn.build_bg(size)
     return message, alpha_blend_with_mask(fg[..., :3], bg, fg[..., 3])
@@ -251,7 +327,8 @@ if __name__ == '__main__':
     from PIL import Image
     from data_aug_v2 import build_data_aug
 
-    message = "有人Hello Pygame你的心里没有人心心"
+    # message = "有人Hello Pygame你的心里没有人心心"
+    message = "你好 안녕 שָׁלוֹם 🎉🌟🙌😄"
 
     # for i in tqdm(range(1000)):
     #     synthesize(message)
@@ -260,6 +337,5 @@ if __name__ == '__main__':
     _, image = synthesize(message)
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     pillow_image = Image.fromarray(rgb_image)
-    pillow_image = transform(pillow_image)
+    # pillow_image = transform(pillow_image)
     pillow_image.save("test.png")
-
