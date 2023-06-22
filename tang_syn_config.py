@@ -8,7 +8,8 @@ import numpy as np
 import pygame
 from fontTools.ttLib import TTFont
 
-warnings.filterwarnings('ignore', category=UserWarning, module='fontTools.ttLib.tables._p_o_s_t')
+warnings.filterwarnings('ignore', category=UserWarning,
+                        module='fontTools.ttLib.tables._p_o_s_t')
 
 FALLBACK_FONT_NAMES = [
     "NotoSansCJKsc-VF.ttf",
@@ -107,33 +108,6 @@ def pick_predefined_color_triplet():
     return jitter_color_triplets(colors)
 
 
-def generate_random_config():
-    config_dict = {}
-
-    # 70% of the time, apply random colors
-    color_prob = random.random()
-    if color_prob < 0.7:  # 70% chance of random colors
-        config_dict['random_colors'] = False
-    else:  # 30% chance of predefined colors
-        config_dict['random_colors'] = True
-
-    # 20% of the time, apply graph grids
-    # 30% of the time, apply chinese grids
-    config_dict['graph_grid'] = False
-    config_dict['chinese_grid'] = False
-    grid_prob = random.random()
-    if grid_prob < 0.2:  # 20% chance of graph grid
-        config_dict['graph_grid'] = True
-    elif grid_prob < 0.5:  # 30% chance of Chinese grid
-        config_dict['chinese_grid'] = True
-
-    elastic_prob = random.random()
-    if elastic_prob > 0.5:
-        config_dict['elastic_transform'] = True
-
-    return config_dict
-
-
 class TextlineSynthesisConfig:
     with open('tang_syn_config.yaml', 'r') as f:
         DEFAULT_CONFIG = yaml.safe_load(f)
@@ -164,7 +138,15 @@ class TextlineSynthesisConfig:
         self.config["fonts"] = self.FONTS
         self.config["ttfonts"] = self.TTFONTS
         self.config["fallback_font_ids"] = self.FALLBACK_FONT_IDS
+
         self.config.update(config)
+
+        self.config["canvas_height"] = self.config["height"] - \
+            self.config["margin_top"] - self.config["margin_bottom"]
+
+        if self.config["limit_font_size"]:
+            self.config["font_size"] = min(
+                self.config["canvas_height"], self.config["font_size"])
 
     def __getattr__(self, item):
         if item in self.config:
@@ -173,33 +155,58 @@ class TextlineSynthesisConfig:
         raise AttributeError(f"Object has no attribute '{item}'")
 
     @classmethod
-    def random_config(cls, **kwargs):
+    def random_config(cls):
         random_config = cls.DEFAULT_CONFIG.copy()
 
-        colors = (generate_color_triplet()
-                  if kwargs.get("random_colors", False) else pick_predefined_color_triplet())
+        random_font_size = random_config.get("random_font_size", False)
+        if random_font_size:
+            random_config["font_size"] = random.randint(
+                random_config["min_font_size"], random_config["max_font_size"])
+
+        random_margin = random_config.get("random_margin", False)
+        if random_margin is not None:
+            random_config['margin_left'] *= random.random()
+            random_config['margin_right'] *= random.random()
+            random_config['margin_top'] *= random.random()
+            random_config['margin_bottom'] *= random.random()
+
+        # 30% of the time, apply random colors
+        color_prob = random.random()
+        if color_prob < random_config.get("random_color_prob", 0.0):
+            colors = generate_color_triplet()
+        else:
+            colors = pick_predefined_color_triplet()
+
         random_config['text_color'] = colors[0]
         random_config['bg_color'] = colors[1]
         random_config['box_color'] = colors[2]
 
-        random_config['margin_left'] = np.random.randint(5, 15)
-        random_config['margin_right'] = np.random.randint(5, 15)
-        random_config['graph_grid'] = kwargs.get("graph_grid", False)
+        # 20% of the time, apply graph grids
+        # 30% of the time, apply chinese grids
+        random_config['graph_grid'] = False
+        random_config['chinese_grid'] = False
+        grid_prob = random.random()
+        if grid_prob < 0.2:  # 20% chance of graph grid
+            random_config['graph_grid'] = True
+        elif grid_prob < 0.5:  # 30% chance of Chinese grid
+            random_config['chinese_grid'] = True
+
         random_config['graph_grid_size'] = np.random.randint(5, 15)
-        random_config['chinese_grid'] = kwargs.get("chinese_grid", False)
         random_config['chinese_grid_padding'] = np.random.randint(8, 12)
-        random_config['elastic_transform'] = kwargs.get(
-            "elastic_transform", False)
+
+        # 40% of the time, apply elastic transform
+        elastic_prob = random.random()
+        if elastic_prob < random_config.get('elastic_transform_prob', 0.0):
+            random_config['elastic_transform'] = True
+        else:
+            random_config['elastic_transform'] = False
+
         return cls(random_config)
 
     # Optional: add a method to modify configuration values
     def set_value(self, key, value):
-        if key == "font_size":
-            raise KeyError(f"Modifying {key} is not allowed")
-
         self.config[key] = value
 
 
 if __name__ == "__main__":
-    config = generate_random_config()
-    TextlineSynthesisConfig.random_config(**config)
+    TextlineSynthesisConfig.random_config()

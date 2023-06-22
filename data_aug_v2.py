@@ -8,7 +8,6 @@ from PIL import Image
 import torch
 from kornia import morphology
 import numpy as np
-import torch
 
 
 # 0: InterpolationMode.NEAREST,
@@ -170,23 +169,23 @@ class KeepOriginal(torch.nn.Module):
 
 def build_data_aug(size, mode="train", resnet=False, resizepad=False, device=None):
     if resnet:
-        norm_tfm = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                        std=[0.229, 0.224, 0.225])
+        norm_tfm = transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225])
     else:
-        norm_tfm = transforms.Normalize(mean=[0.5], std=[0.5])
+        norm_tfm = transforms.Normalize(
+            mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 
     if resizepad:
         resize_tfm = ResizePad(imgH=size, imgW=size)
     else:
         resize_tfm = transforms.Resize(
-            size, interpolation=InterpolationMode.BICUBIC, antialias=True)
+            size, InterpolationMode.BILINEAR, antialias=True)
 
     if mode == 'train':
         return transforms.Compose([
             transforms.ToImageTensor(),
             transforms.ConvertImageDtype(dtype=torch.float32),
-            transforms.Resize(
-                size * 2, interpolation=InterpolationMode.BICUBIC, antialias=True),
             transforms.RandomChoice([
                 Underline(),
                 RandomInkSpots(),
@@ -198,17 +197,12 @@ def build_data_aug(size, mode="train", resnet=False, resizepad=False, device=Non
                                           fill=(1, 1, 1)),
                 transforms.GaussianBlur(3),
                 transforms.Resize(
-                    size * 2 // 3, InterpolationMode.BICUBIC, antialias=True),
-                Dilation(3, device),
-                Erosion(3, device),
+                    size * 4 // 5, InterpolationMode.NEAREST, antialias=True),
                 KeepOriginal(),
             ]),
-            resize_tfm,
-            norm_tfm,
+            # resize_tfm,
+            # norm_tfm,
             transforms.ToImagePIL()
         ])
 
-    return transforms.Compose([
-        resize_tfm,
-        norm_tfm
-    ])
+    return None

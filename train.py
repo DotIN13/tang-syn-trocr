@@ -11,7 +11,7 @@ import evaluate
 
 from PIL import Image
 
-from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcessor, BasicTokenizer
+from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcessor
 from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
 from transformers import default_data_collator
 
@@ -19,7 +19,7 @@ from data_aug_v2 import build_data_aug
 from torch.utils.data import Subset
 from tang_syn import synthesize
 
-FULL_TRAINING = True
+FULL_TRAINING = False
 MAX_LENGTH = 64
 
 
@@ -34,8 +34,8 @@ def load_model():
     tokenizer = None
 
     if FULL_TRAINING:
-        vision_hf_model = 'microsoft/beit-base-patch16-384'
-        nlp_hf_model = "uer/roberta-base-word-chinese-cluecorpussmall"
+        vision_hf_model = 'facebook/deit-base-distilled-patch16-384'
+        nlp_hf_model = "hfl/chinese-macbert-base"
 
         # Reference: https://github.com/huggingface/transformers/issues/15823
         # initialize the encoder from a pretrained ViT and the decoder from a pretrained BERT model.
@@ -44,7 +44,7 @@ def load_model():
             vision_hf_model, nlp_hf_model)
         tokenizer = AutoTokenizer.from_pretrained(nlp_hf_model)
     else:
-        trocr_model = 'models/epoch-1/'
+        trocr_model = 'checkpoints/checkpoint-122000'
         model = VisionEncoderDecoderModel.from_pretrained(trocr_model)
         tokenizer = AutoTokenizer.from_pretrained(trocr_model)
 
@@ -60,7 +60,7 @@ def load_model():
         model.config.early_stopping = True
         model.config.no_repeat_ngram_size = 3
         model.config.length_penalty = 2.0
-        model.config.num_beams = 6
+        model.config.num_beams = 4
 
     return model, tokenizer
 
@@ -105,7 +105,7 @@ class OCRDataset(Dataset):
         else:
             text_idx = int(idx / self.arbitrary_len * (self.df_len - 1))
             text = self.df['text'][text_idx]
-            text, bgr_image = synthesize(text)
+            bgr_image = synthesize(text)
             rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(rgb_image)
 
@@ -113,6 +113,9 @@ class OCRDataset(Dataset):
             image = self.transform(image)
 
         pixel_values = self.processor(image, return_tensors="pt").pixel_values
+
+        # Remove spaces from text, as only the tang-syn version 1 had spaces before text
+        text = text.strip()
         labels = self.tokenizer(text,
                                 padding="max_length",
                                 stride=32,
@@ -210,10 +213,9 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
                  eval_dataset):
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
-        evaluation_strategy="steps",
-        per_device_train_batch_size=28,
-        per_device_eval_batch_size=28,
-        num_train_epochs=3,
+        per_device_train_batch_size=32,
+        per_device_eval_batch_size=32,
+        num_train_epochs=2,
         fp16=True,
         learning_rate=4e-5,
         output_dir="./checkpoints",
@@ -223,12 +225,14 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         save_strategy="steps",
         save_total_limit=5,
         save_steps=2000,
+        evaluation_strategy="steps",
         eval_steps=2000,
         resume_from_checkpoint="./checkpoints/",
-        dataloader_num_workers=6,
+        dataloader_num_workers=12,
         optim="adamw_torch",
         lr_scheduler_type="linear",
         warmup_steps=4000,
+        load_best_model_at_end=True
     )
 
     # instantiate trainer
@@ -257,8 +261,6 @@ def save_checkpoint(trainer):
                os.path.join(output_dir, SCALER_NAME))
     torch.save(trainer.optimizer.state_dict(),
                os.path.join(output_dir, OPTIMIZER_NAME))
-    torch.save(trainer.scaler.state_dict(),
-               os.path.join(output_dir, SCALER_NAME))
     torch.save(trainer.lr_scheduler.state_dict(),
                os.path.join(output_dir, SCHEDULER_NAME))
     # Single gpu
@@ -282,7 +284,7 @@ if __name__ == "__main__":
     trainer = init_trainer(model, tokenizer, compute_metrics, train_dataset,
                            eval_dataset)
     try:
-        result = trainer.train()
+        result = trainer.train(resume_from_checkpoint=True)
         print_summary(result)
     except Exception as err:
         save_checkpoint(trainer)

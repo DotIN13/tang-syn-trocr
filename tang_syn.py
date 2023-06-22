@@ -9,11 +9,15 @@ import pygame.freetype
 from scipy.ndimage import gaussian_filter, map_coordinates
 import matplotlib.pyplot as plt
 
-from tang_syn_config import TextlineSynthesisConfig, generate_random_config, can_render
+from tang_syn_config import TextlineSynthesisConfig, can_render
 
 
 def is_chinese(text):
     return re.search(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff01-\uff9f]", text)
+
+
+def is_chinese_punct(text):
+    return text in "，。！？"
 
 
 def alpha_blend_with_mask(foreground, background, mask):  # modified func from link
@@ -95,6 +99,25 @@ def apply_mask_with_ellipses(image, num_ellipses=5):
     return image
 
 
+def generate_smooth_sequence(n, min_val=0.0, max_val=1.0, sigma=0.5):
+    max_diff = (max_val - min_val) * sigma / n
+    # Generate an array of differences between consecutive numbers
+    diffs = np.random.uniform(-max_diff, max_diff, size=n-1)
+
+    # Initialize the array of numbers
+    numbers = np.zeros(n)
+    numbers[0] = np.random.uniform(min_val, max_val)
+
+    # Fill in the array
+    for i in range(1, n):
+        numbers[i] = numbers[i-1] + diffs[i-1]
+
+    # Clip the numbers above max_val or below min_val
+    numbers = np.clip(numbers, min_val, max_val)
+
+    return numbers
+
+
 class TextlineSynthesis:
     def __init__(self, config):
         self.config = config
@@ -119,23 +142,42 @@ class TextlineSynthesis:
         # Set grid size
         grid_size = self.get_grid_size()
 
-        # Define starting positions
+        ####### Define starting positions #######
         start_pos_x = self.config.margin_left
+
+        extra_left = None
+        extra_right = None
 
         # Add extra Chinese char grids to the left side
         if self.config.chinese_grid:
             extra_left = int(np.random.normal(
                 self.config.chinese_grid_extra_left, 2))
             extra_left = max(0, extra_left)
+
+            # Approximate to 20 grids
+            if self.config.chinese_grid_fill:
+                extra_right = random.randint(
+                    0, max(2, self.config.chinese_grid_fill_to - len(message)))
+            else:
+                extra_right = int(np.random.normal(
+                    self.config.chinese_grid_extra_right, 2))
+
             start_pos_x += extra_left * grid_size
 
         pos_x = start_pos_x
 
         # Calculate starting y-position to center the text vertically
-        pos_y = (self.config.height - text_height) // 2
+        start_pos_y = self.config.margin_top + \
+            (self.config.canvas_height - text_height) / 2
 
-        # Create an empty list to hold the text surfaces and their positions
-        text_surfaces_and_positions = []
+        chinese_punct_lift = None
+
+        if self.config.chinese_grid:
+            chinese_punct_lift = random.uniform(0.0, self.config.font_size / 3)
+
+        pos_y = start_pos_y
+
+        ###### Calculate gaps and skews ######
 
         base_gap = random.uniform(
             self.config.base_gap_min, self.config.base_gap_max)
@@ -143,6 +185,18 @@ class TextlineSynthesis:
         # Render each character separately with random gap
         base_skew = random.uniform(
             self.config.base_skew_min, self.config.base_skew_max)
+
+        # Generate a smoothly varying font weights
+        font_weights = generate_smooth_sequence(
+            len(message), min_val=-1 / 128, max_val=1 / 16)
+
+        if self.config.char_y_offset:
+            y_offset_limit = self.config.char_y_offset
+            y_jittors = generate_smooth_sequence(
+                len(message), min_val=-y_offset_limit, max_val=y_offset_limit, sigma=0.8)
+
+        # Create an empty list to hold the text surfaces and their positions
+        text_surfaces_and_positions = []
 
         # Main render loop
         for i, char in enumerate(message):
@@ -153,15 +207,16 @@ class TextlineSynthesis:
             skew = int(base_skew + skew)
 
             font = fonts[i]
-            style = random.choices(
-                [pygame.freetype.STYLE_NORMAL, pygame.freetype.STYLE_STRONG], weights=[0.2, 0.8], k=1)[0]
-            font.strength = random.uniform(0.0, 1 / 24)
+            style = pygame.freetype.STYLE_NORMAL if font_weights[
+                i] < 0.0 else pygame.freetype.STYLE_STRONG
+            font.strength = max(0.0, font_weights[i])
 
-            # Render the character
+            # Render the character to temporary surface
             text_surface, _ = font.render(
                 char, self.config.text_color, (255, 255, 255, 0), size=self.config.font_size,
                 style=style, rotation=skew)
 
+            # Correct the x-coordinate for Chinese grid characters
             char_pos_x = pos_x
 
             if self.config.chinese_grid:
@@ -179,20 +234,33 @@ class TextlineSynthesis:
             # Correct the y-coordinate for baseline alignment
             char_pos_y = pos_y + max_descent - font_metrics[i][3]
 
+            if self.config.char_y_offset:
+                char_pos_y += y_jittors[i]
+
+            if self.config.chinese_grid and char in "，。":
+                char_pos_y -= chinese_punct_lift
+
             # Store the text surface and its position
             text_surfaces_and_positions.append(
                 (text_surface, (char_pos_x, char_pos_y)))
 
             if self.config.chinese_grid and i == len(message) - 1:
-                extra_right = int(np.random.normal(
-                    self.config.chinese_grid_extra_right, 2))
-                extra_right = max(0, extra_right)
-                pos_x += (1 + extra_right) * grid_size
+                # If chinese grid is enabled, and this is the last char
+                used_grid = (pos_x - self.config.margin_left +
+                             text_surface.get_width()) // grid_size + 1
+                pos_x = self.config.margin_left + \
+                    (used_grid + extra_right) * grid_size
+
+            elif self.config.chinese_grid and extra_right == 0 and (
+                    i == len(message) - 2 and message[i + 1] in "，。！？"):
+                pos_x += text_surface.get_width() * 0.7
+
             elif self.config.chinese_grid and is_chinese_char[i + 1]:
-                # if the next char is Chinese, count used grid
+                # If chinese grid is enabled, and the next char is Chinese
                 used_grid = (pos_x - self.config.margin_left +
                              text_surface.get_width()) // grid_size
                 pos_x = self.config.margin_left + (used_grid + 1) * grid_size
+
             else:
                 # Set a random gap between characters
                 gap = np.random.normal(
@@ -218,7 +286,7 @@ class TextlineSynthesis:
         for text_surface, position in text_surfaces_and_positions:
             surface.blit(text_surface, position)  # Text only surface
 
-        return message, surface
+        return surface
 
     def build_bg(self, size):
         # Define canvas size
@@ -233,22 +301,43 @@ class TextlineSynthesis:
 
         # If Chinese grid is enabled, draw a single line of grids in the center
         if self.config.chinese_grid:
-            y = (self.config.height - grid_size) // 2
-            x_max = int(width) - self.config.margin_right
-            for x in range(self.config.margin_left, x_max, grid_size):
+            x = int(self.config.margin_left)
+
+            start_pos_y = self.config.margin_top + \
+                (self.config.canvas_height - grid_size) / 2
+            start_pos_y += random.uniform(-3.0, 3.0)
+            y = int(start_pos_y)
+
+            # Add 1 to make sure the last grid is generated
+            x_max = width - self.config.margin_right - grid_size + 1
+
+            while x <= x_max:
                 top_left = (x, y)
                 bottom_right = (x + grid_size, y + grid_size)
                 cv2.rectangle(grid_image, top_left, bottom_right,
                               self.config.box_color, thickness=1)
+                x += grid_size
+
+            return grid_image
 
         # If graph grid is enabled, draw a grid of boxes
         if self.config.graph_grid:
-            for x in range(0, int(width), grid_size):
-                for y in range(0, self.config.height, grid_size):
+            x = 0
+            y = 0
+
+            while x < width:
+
+                while y < self.config.height:
                     top_left = (x, y)
                     bottom_right = (x + grid_size, y + grid_size)
                     cv2.rectangle(grid_image, top_left, bottom_right,
                                   self.config.box_color, thickness=1)
+                    y += grid_size
+
+                x += grid_size
+                y = 0
+
+            return grid_image
 
         return grid_image
 
@@ -264,8 +353,9 @@ class TextlineSynthesis:
         if not self.config.elastic_transform:
             return image
 
-        alpha = image.shape[1] * self.config.elastic_alpha_ratio
-        sigma = image.shape[1] * self.config.elastic_sigma_ratio
+        # The image is in h, w, c format
+        alpha = image.shape[0] * self.config.elastic_alpha_ratio
+        sigma = image.shape[0] * self.config.elastic_sigma_ratio
         return elastic_transform(image, alpha, sigma)
 
     def generate_fonts_and_metrics(self, text):
@@ -305,13 +395,12 @@ class TextlineSynthesis:
 
 def synthesize(message):
     if message == "":
-        raise ValueError("Text cannot be empty.")
+        raise ValueError("Text must not be empty.")
 
-    config = generate_random_config()
-    syn_conf = TextlineSynthesisConfig.random_config(**config)
+    syn_conf = TextlineSynthesisConfig.random_config()
     text_syn = TextlineSynthesis(syn_conf)
 
-    message, surface = text_syn.draw_text(message)
+    surface = text_syn.draw_text(message)
     size = surface.get_size()
     fg = text_syn.surf2bgra(surface)
 
@@ -319,7 +408,7 @@ def synthesize(message):
 
     fg = text_syn.apply_elastic_transform(fg)
     bg = text_syn.build_bg(size)
-    return message, alpha_blend_with_mask(fg[..., :3], bg, fg[..., 3])
+    return alpha_blend_with_mask(fg[..., :3], bg, fg[..., 3])
 
 
 if __name__ == '__main__':
@@ -334,7 +423,7 @@ if __name__ == '__main__':
     #     synthesize(message)
 
     transform = build_data_aug(32, "train")
-    _, image = synthesize(message)
+    image = synthesize(message)
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     pillow_image = Image.fromarray(rgb_image)
     # pillow_image = transform(pillow_image)
