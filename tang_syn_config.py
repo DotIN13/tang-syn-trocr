@@ -163,6 +163,12 @@ class TextlineSynthesisConfig:
             random_config["font_size"] = random.randint(
                 random_config["min_font_size"], random_config["max_font_size"])
 
+        font_size_jittor = random.random()
+        if font_size_jittor < random_config["font_size_jittor_prob"]:
+            random_config["font_size_jittor"] = True
+        else:
+            random_config["font_size_jittor"] = False
+
         random_margin = random_config.get("random_margin", False)
         if random_margin is not None:
             random_config['margin_left'] *= random.random()
@@ -186,9 +192,9 @@ class TextlineSynthesisConfig:
         random_config['graph_grid'] = False
         random_config['chinese_grid'] = False
         grid_prob = random.random()
-        if grid_prob < 0.2:  # 20% chance of graph grid
+        if grid_prob < 0.1:  # 10% chance of graph grid
             random_config['graph_grid'] = True
-        elif grid_prob < 0.5:  # 30% chance of Chinese grid
+        elif grid_prob < 0.3:  # 20% chance of Chinese grid
             random_config['chinese_grid'] = True
 
         random_config['graph_grid_size'] = np.random.randint(5, 15)

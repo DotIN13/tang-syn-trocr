@@ -24,3 +24,7 @@ log
 models
 
 fonts
+
+zhwiki/*
+
+!.keep

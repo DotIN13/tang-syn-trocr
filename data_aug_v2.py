@@ -128,11 +128,11 @@ class Underline(torch.nn.Module):
 
 
 class RandomInkSpots(torch.nn.Module):
-    def __init__(self, ink_spots_num=5, ink_spot_size=5, ink_spot_color=(0, 0, 0)):
+
+    def __init__(self, ink_spots_num=10, ink_spot_size=5):
         super().__init__()
         self.ink_spots_num = ink_spots_num
         self.ink_spot_size = ink_spot_size
-        self.ink_spot_color = ink_spot_color
 
     def forward(self, img):
         # Convert PyTorch tensor to numpy array
@@ -146,11 +146,22 @@ class RandomInkSpots(torch.nn.Module):
             center_y = random.uniform(0, img.shape[0])
 
             # Generate some random points around the center
-            points = np.array([[(random.uniform(center_x - self.ink_spot_size, center_x + self.ink_spot_size),
-                                 random.uniform(center_y - self.ink_spot_size, center_y + self.ink_spot_size))] for _ in range(5)], dtype=np.int32)
+            points = []
+            for _ in range(5):
+                size = random.uniform(0, self.ink_spot_size)
+                point = (random.uniform(center_x - size, center_x + size),
+                         random.uniform(center_y - size, center_y + size))
+                points.append(point)
+
+            # Convert points to an np.int32 array
+            points = np.array(points, np.int32).reshape((-1, 1, 2))
+
+            # Random color for each ink spot
+            color = (random.randint(0, 128), random.randint(
+                0, 128), random.randint(0, 128))
 
             # Draw the ink spot using OpenCV
-            cv2.fillPoly(img, [points], self.ink_spot_color)
+            cv2.fillPoly(img, [points], color)
 
         # Convert numpy array back to PyTorch tensor
         img = torch.from_numpy(img).permute(2, 0, 1)
@@ -168,19 +179,6 @@ class KeepOriginal(torch.nn.Module):
 
 
 def build_data_aug(size, mode="train", resnet=False, resizepad=False, device=None):
-    if resnet:
-        norm_tfm = transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225])
-    else:
-        norm_tfm = transforms.Normalize(
-            mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-
-    if resizepad:
-        resize_tfm = ResizePad(imgH=size, imgW=size)
-    else:
-        resize_tfm = transforms.Resize(
-            size, InterpolationMode.BILINEAR, antialias=True)
 
     if mode == 'train':
         return transforms.Compose([
@@ -197,11 +195,11 @@ def build_data_aug(size, mode="train", resnet=False, resizepad=False, device=Non
                                           fill=(1, 1, 1)),
                 transforms.GaussianBlur(3),
                 transforms.Resize(
-                    size * 4 // 5, InterpolationMode.NEAREST, antialias=True),
+                    size * 4 // 5, InterpolationMode.BICUBIC, antialias=True),
+                Erosion(2),
+                Dilation(2),
                 KeepOriginal(),
             ]),
-            # resize_tfm,
-            # norm_tfm,
             transforms.ToImagePIL()
         ])
 

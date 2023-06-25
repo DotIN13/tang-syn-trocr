@@ -44,7 +44,7 @@ def load_model():
             vision_hf_model, nlp_hf_model)
         tokenizer = AutoTokenizer.from_pretrained(nlp_hf_model)
     else:
-        trocr_model = 'checkpoints/checkpoint-122000'
+        trocr_model = 'checkpoints/checkpoint-308000'
         model = VisionEncoderDecoderModel.from_pretrained(trocr_model)
         tokenizer = AutoTokenizer.from_pretrained(trocr_model)
 
@@ -177,7 +177,7 @@ def load_datasets(processor, tokenizer):
                                max_target_length=MAX_LENGTH)
 
     # Create a random subset of the dataset
-    num_samples = 100
+    num_samples = 300
     subset_indices = torch.randperm(len(eval_dataset))[:num_samples]
     eval_dataset = Subset(eval_dataset, subset_indices.tolist())
 
@@ -215,7 +215,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         predict_with_generate=True,
         per_device_train_batch_size=32,
         per_device_eval_batch_size=32,
-        num_train_epochs=2,
+        num_train_epochs=1,
         fp16=True,
         learning_rate=4e-5,
         output_dir="./checkpoints",
@@ -228,11 +228,12 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         evaluation_strategy="steps",
         eval_steps=2000,
         resume_from_checkpoint="./checkpoints/",
-        dataloader_num_workers=12,
+        dataloader_num_workers=6,
         optim="adamw_torch",
         lr_scheduler_type="linear",
         warmup_steps=4000,
-        load_best_model_at_end=True
+        load_best_model_at_end=True,
+        dataloader_pin_memory=True
     )
 
     # instantiate trainer

@@ -11,9 +11,13 @@ margin_bottom: 10
 # Font size
 random_font_size: true
 limit_font_size: true
+
 font_size: 30
 min_font_size: 25
 max_font_size: 35
+
+font_size_jittor_prob: 0.3
+font_size_jittor_std: 2.0
 
 random_color_prob: 0.3
 text_color: [255, 0, 0]

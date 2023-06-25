@@ -201,6 +201,9 @@ class TextlineSynthesis:
         # Main render loop
         for i, char in enumerate(message):
 
+            # Helper variable for the next character
+            next_char = message[i + 1] if i + 1 < len(message) else ""
+
             # Add random skew
             skew = np.random.normal(
                 self.config.skew_mean, self.config.skew_std_dev)
@@ -211,9 +214,15 @@ class TextlineSynthesis:
                 i] < 0.0 else pygame.freetype.STYLE_STRONG
             font.strength = max(0.0, font_weights[i])
 
+            if self.config.font_size_jittor:
+                font_size = np.random.normal(
+                    self.config.font_size, self.config.font_size_jittor_std)
+            else:
+                font_size = self.config.font_size
+
             # Render the character to temporary surface
             text_surface, _ = font.render(
-                char, self.config.text_color, (255, 255, 255, 0), size=self.config.font_size,
+                char, self.config.text_color, (255, 255, 255, 0), size=font_size,
                 style=style, rotation=skew)
 
             # Correct the x-coordinate for Chinese grid characters
@@ -221,14 +230,21 @@ class TextlineSynthesis:
 
             if self.config.chinese_grid:
 
-                if i > 0 and not is_chinese_char[i] and is_chinese_char[i - 1]:
-                    pos_x += np.random.normal(self.config.font_size, 2.0)
-                    char_pos_x = pos_x
+                if char in "“”":
+                    char_pos_x -= grid_size * 0.4
 
-                if is_chinese_char[i]:
+                if (char + next_char) in ["：“", "，“", "。”", "！”", "？”", "…”"]:
+                    char_pos_x -= grid_size * 0.32
+
+                if i > 0 and not is_chinese_char[i] and is_chinese_char[i - 1]:
+                    offset = np.random.normal(self.config.font_size, 2.0)
+                    pos_x += offset
+                    char_pos_x += offset
+
+                if is_chinese_char[i] and char not in "“”":
                     # Place the chinese character in the center of the grid
                     char_padding_left = np.random.normal(
-                        (grid_size - text_surface.get_width()) / 2.0, 2.0)
+                        (grid_size - text_surface.get_width()) / 2.0, 3.0)
                     char_pos_x += char_padding_left
 
             # Correct the y-coordinate for baseline alignment
@@ -237,7 +253,7 @@ class TextlineSynthesis:
             if self.config.char_y_offset:
                 char_pos_y += y_jittors[i]
 
-            if self.config.chinese_grid and char in "，。":
+            if self.config.chinese_grid and char in "，。“”":
                 char_pos_y -= chinese_punct_lift
 
             # Store the text surface and its position
@@ -252,14 +268,24 @@ class TextlineSynthesis:
                     (used_grid + extra_right) * grid_size
 
             elif self.config.chinese_grid and extra_right == 0 and (
-                    i == len(message) - 2 and message[i + 1] in "，。！？"):
+                    i == len(message) - 2 and next_char in "，。！？“”"):
                 pos_x += text_surface.get_width() * 0.7
+
+            # elif self.config.chinese_grid and (char + next_char) in ["：“", "。”", "，”"]:
+            #     pos_x += text_surface.get_width() * 0.3
+
+            # elif self.config.chinese_grid and is_chinese_char[i + 1] and char in "“”":
+            #     used_grid = (pos_x - self.config.margin_left) // grid_size + 1
+            #     pos_x = self.config.margin_left + used_grid * grid_size
+
+            elif self.config.chinese_grid and char in "“”":
+                pass
 
             elif self.config.chinese_grid and is_chinese_char[i + 1]:
                 # If chinese grid is enabled, and the next char is Chinese
                 used_grid = (pos_x - self.config.margin_left +
-                             text_surface.get_width()) // grid_size
-                pos_x = self.config.margin_left + (used_grid + 1) * grid_size
+                             text_surface.get_width()) // grid_size + 1
+                pos_x = self.config.margin_left + used_grid * grid_size
 
             else:
                 # Set a random gap between characters
