@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class ResizePad(object):
 
-    def __init__(self, imgH=64, imgW=3072, keep_ratio_with_pad=True):
+    def __init__(self, imgH=64, imgW=1200, keep_ratio_with_pad=True):
         self.imgH = imgH
         self.imgW = imgW
         assert keep_ratio_with_pad == True
@@ -46,7 +46,6 @@ class Dilation(torch.nn.Module):
 
     def __init__(self, kernel=3, device=None):
         super().__init__()
-        # self.kernel = kernel
         self.kernel = torch.ones(kernel, kernel)
         if device:
             self.kernel.to(device)
@@ -67,13 +66,11 @@ class Erosion(torch.nn.Module):
 
     def __init__(self, kernel=3, device=None):
         super().__init__()
-        # self.kernel = kernel
         self.kernel = torch.ones(kernel, kernel)
         if device:
             self.kernel.to(device)
 
     def forward(self, img):
-        # return img.filter(ImageFilter.MinFilter(self.kernel))
         if len(img.shape) == 4:
             return morphology.erosion(img, self.kernel)
 
@@ -140,6 +137,10 @@ class RandomInkSpots(torch.nn.Module):
 
         spot_num = random.randint(1, self.ink_spots_num)
 
+        # Random color for each ink spot
+        colors = [(random.randint(0, 255), random.randint(
+            0, 255), random.randint(0, 255)) for _ in range(3)]
+
         for _ in range(spot_num):
             # Random position for the center of the ink spot
             center_x = random.uniform(0, img.shape[1])
@@ -156,12 +157,8 @@ class RandomInkSpots(torch.nn.Module):
             # Convert points to an np.int32 array
             points = np.array(points, np.int32).reshape((-1, 1, 2))
 
-            # Random color for each ink spot
-            color = (random.randint(0, 128), random.randint(
-                0, 128), random.randint(0, 128))
-
             # Draw the ink spot using OpenCV
-            cv2.fillPoly(img, [points], color)
+            cv2.fillPoly(img, [points], random.choice(colors))
 
         # Convert numpy array back to PyTorch tensor
         img = torch.from_numpy(img).permute(2, 0, 1)
@@ -195,7 +192,7 @@ def build_data_aug(size, mode="train", resnet=False, resizepad=False, device=Non
                                           fill=(1, 1, 1)),
                 transforms.GaussianBlur(3),
                 transforms.Resize(
-                    size * 4 // 5, InterpolationMode.BICUBIC, antialias=True),
+                    size * 4 // 5, InterpolationMode.BILINEAR, antialias=True),
                 Erosion(2),
                 Dilation(2),
                 KeepOriginal(),

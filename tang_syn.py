@@ -230,11 +230,14 @@ class TextlineSynthesis:
 
             if self.config.chinese_grid:
 
-                if char in "“”":
-                    char_pos_x -= grid_size * 0.4
+                if char == "“":
+                    char_pos_x -= grid_size * 0.25
+
+                if char == "”":
+                    char_pos_x -= grid_size * 0.5
 
                 if (char + next_char) in ["：“", "，“", "。”", "！”", "？”", "…”"]:
-                    char_pos_x -= grid_size * 0.32
+                    char_pos_x -= grid_size * 0.3
 
                 if i > 0 and not is_chinese_char[i] and is_chinese_char[i - 1]:
                     offset = np.random.normal(self.config.font_size, 2.0)

@@ -9,6 +9,8 @@ import torch
 from torch.utils.data import Dataset
 import evaluate
 
+from tqdm import tqdm
+
 from PIL import Image
 
 from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcessor
@@ -19,8 +21,9 @@ from data_aug_v2 import build_data_aug
 from torch.utils.data import Subset
 from tang_syn import synthesize
 
-FULL_TRAINING = False
+FULL_TRAINING = True
 MAX_LENGTH = 64
+TRAIN_MAX_LENGTH = 32
 
 
 def print_summary(result):
@@ -65,6 +68,16 @@ def load_model():
     return model, tokenizer
 
 
+def random_slice(s, min_length=1, max_length=20):
+    length = random.randint(min_length, max_length)
+
+    if len(s) <= length:
+        return s
+
+    start = random.randint(0, len(s) - length)
+    return s[start: start + length]
+
+
 class OCRDataset(Dataset):
 
     def __init__(self,
@@ -86,7 +99,10 @@ class OCRDataset(Dataset):
         self.tokenizer = tokenizer
         self.df = self.build_df()
         self.df_len = len(self.df)
-        self.arbitrary_len = 12000000
+
+        if mode == "train":
+            self.file_handles = self.load_texts()
+            self.arbitrary_len = 12000000
 
     def __len__(self):
         return self.arbitrary_len
@@ -101,10 +117,9 @@ class OCRDataset(Dataset):
             # prepare image (i.e. resize + normalize)
             image = Image.open(path.join(self.dataset_dir,
                                          file_name)).convert("RGB")
-        # 70% percent of the time, use online generated data
+
         else:
-            text_idx = int(idx / self.arbitrary_len * (self.df_len - 1))
-            text = self.df['text'][text_idx]
+            text = self.sample_line_from_texts()
             bgr_image = synthesize(text)
             rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(rgb_image)
@@ -114,11 +129,11 @@ class OCRDataset(Dataset):
 
         pixel_values = self.processor(image, return_tensors="pt").pixel_values
 
-        # Remove spaces from text, as only the tang-syn version 1 had spaces before text
+        # Remove spaces from text, as only data from tang-syn 1.0 had spaces before text
         text = text.strip()
+
         labels = self.tokenizer(text,
                                 padding="max_length",
-                                stride=32,
                                 truncation=True,
                                 max_length=self.max_target_length).input_ids
 
@@ -136,17 +151,59 @@ class OCRDataset(Dataset):
 
     def build_df(self):
         li = []
-        for root, _dirs, files in os.walk(self.labels_dir):
-            for file in files:  # Loop through the dataset tsvfiles
-                if not file.endswith(".tsv"):
-                    continue
+        for file in tqdm(os.listdir(self.labels_dir)):
+            if not file.endswith(".tsv"):
+                continue
 
-                print(f"Processing {file}")
-                li.append(
-                    pd.read_table(path.join(root, file),
-                                  names=["file_name", "text"]))
+            # print(f"Reading {file}")
+
+            li.append(
+                pd.read_table(path.join(self.labels_dir, file),
+                              names=["file_name", "text"]))
 
         return pd.concat(li, axis=0, ignore_index=True)
+
+    def load_texts(self):
+        """Load text files"""
+        index_dir = path.join("dataset_syn", "indexes")
+        labels_dir = path.join("dataset_syn", "labels")
+
+        file_handles = []
+
+        for file in tqdm(os.listdir(index_dir)):
+            if not file.endswith(".tsv"):
+                continue
+
+            # print(f"Reading {file}")
+
+            with open(path.join(index_dir, file), "r", encoding="utf-8") as index_file:
+                for line in index_file:
+                    line = line.strip()
+                    if line:
+                        file, length = line.split("\t")
+                        file_path = path.join(labels_dir, file)
+                        file_handles.append((file_path, int(length)))
+
+        return file_handles
+
+    def sample_line_from_texts(self):
+        """Sample line from file handles"""
+        file_path, handle_len = random.choice(self.file_handles)
+        line_index = random.randint(0, handle_len - 1)
+
+        # print(file_path, line_index)
+        with open(file_path, "r", encoding="utf-8") as handle:
+            for i, line in enumerate(handle):
+                if i != line_index:
+                    continue
+
+                line = line.strip()
+                if not line:
+                    print(
+                        f"Empty line at line {line_index} of {file_path}, retrying.")
+                    return self.sample_line_from_texts()
+
+                return random_slice(line, max_length=self.max_target_length)
 
 
 class EvalDataset(OCRDataset):
@@ -163,8 +220,8 @@ def load_datasets(processor, tokenizer):
                                tokenizer=tokenizer,
                                processor=processor,
                                mode="train",
-                               transform=build_data_aug(32, "train"),
-                               max_target_length=MAX_LENGTH)
+                               transform=build_data_aug(64, "train"),
+                               max_target_length=TRAIN_MAX_LENGTH)
 
     # Define the number of samples to keep in eval dataset
 
@@ -176,15 +233,24 @@ def load_datasets(processor, tokenizer):
                                transform=None,
                                max_target_length=MAX_LENGTH)
 
+    niandai_dataset = EvalDataset(dataset_dir=dataset_dir,
+                                  labels_dir="dataset/labels/test-niandai",
+                                  tokenizer=tokenizer,
+                                  processor=processor,
+                                  mode="eval",
+                                  transform=None,
+                                  max_target_length=MAX_LENGTH)
+
     # Create a random subset of the dataset
-    num_samples = 300
+    num_samples = 500
     subset_indices = torch.randperm(len(eval_dataset))[:num_samples]
     eval_dataset = Subset(eval_dataset, subset_indices.tolist())
 
     print("Number of training examples:", len(train_dataset))
-    print("Number of validation examples:", len(eval_dataset))
+    print("Number of validation examples:", len(
+        eval_dataset), len(niandai_dataset))
 
-    return train_dataset, eval_dataset
+    return train_dataset, {"hwdb": eval_dataset, "niandai": niandai_dataset}
 
 
 def build_metrics(tokenizer):
@@ -214,7 +280,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
         per_device_train_batch_size=32,
-        per_device_eval_batch_size=32,
+        per_device_eval_batch_size=50,
         num_train_epochs=1,
         fp16=True,
         learning_rate=4e-5,
@@ -223,7 +289,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         logging_strategy="steps",
         logging_steps=100,
         save_strategy="steps",
-        save_total_limit=5,
+        save_total_limit=8,
         save_steps=2000,
         evaluation_strategy="steps",
         eval_steps=2000,
@@ -232,7 +298,10 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         optim="adamw_torch",
         lr_scheduler_type="linear",
         warmup_steps=4000,
+        weight_decay=0.01,
         load_best_model_at_end=True,
+        metric_for_best_model="cer",
+        greater_is_better=False,
         dataloader_pin_memory=True
     )
 
@@ -285,7 +354,7 @@ if __name__ == "__main__":
     trainer = init_trainer(model, tokenizer, compute_metrics, train_dataset,
                            eval_dataset)
     try:
-        result = trainer.train(resume_from_checkpoint=True)
+        result = trainer.train(resume_from_checkpoint=not FULL_TRAINING)
         print_summary(result)
     except Exception as err:
         save_checkpoint(trainer)

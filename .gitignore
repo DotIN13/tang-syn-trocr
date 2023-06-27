@@ -4,7 +4,11 @@ __pycache__
 
 hw_data
 hw_data.tar
-dataset
+
+dataset/*
+dataset_archive/*
+dataset_syn/*
+
 data
 aug
 
@@ -12,7 +16,6 @@ labels
 labels-src
 
 output
-images
 
 *.tsv
 *.txt
