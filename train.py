@@ -22,6 +22,7 @@ from torch.utils.data import Subset
 from tang_syn import synthesize
 
 FULL_TRAINING = True
+RESUME = True
 MAX_LENGTH = 64
 TRAIN_MAX_LENGTH = 32
 
@@ -120,6 +121,7 @@ class OCRDataset(Dataset):
 
         else:
             text = self.sample_line_from_texts()
+            text = random_slice(text, max_length=self.max_target_length)
             bgr_image = synthesize(text)
             rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(rgb_image)
@@ -203,7 +205,7 @@ class OCRDataset(Dataset):
                         f"Empty line at line {line_index} of {file_path}, retrying.")
                     return self.sample_line_from_texts()
 
-                return random_slice(line, max_length=self.max_target_length)
+                return line
 
 
 class EvalDataset(OCRDataset):
@@ -288,6 +290,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         logging_dir="./logs",
         logging_strategy="steps",
         logging_steps=100,
+        log_level="info",
         save_strategy="steps",
         save_total_limit=8,
         save_steps=2000,
@@ -300,7 +303,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         warmup_steps=4000,
         weight_decay=0.01,
         load_best_model_at_end=True,
-        metric_for_best_model="cer",
+        metric_for_best_model="niandai_cer",
         greater_is_better=False,
         dataloader_pin_memory=True
     )
@@ -354,7 +357,7 @@ if __name__ == "__main__":
     trainer = init_trainer(model, tokenizer, compute_metrics, train_dataset,
                            eval_dataset)
     try:
-        result = trainer.train(resume_from_checkpoint=not FULL_TRAINING)
+        result = trainer.train(resume_from_checkpoint=RESUME)
         print_summary(result)
     except Exception as err:
         save_checkpoint(trainer)

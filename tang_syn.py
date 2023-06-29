@@ -11,6 +11,9 @@ import matplotlib.pyplot as plt
 
 from tang_syn_config import TextlineSynthesisConfig, can_render
 
+# TODO: Add support for single quotes
+# TODO: Add support for the creation of striken-through or covered characters
+
 
 def is_chinese(text):
     return re.search(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff01-\uff9f]", text)
@@ -220,10 +223,30 @@ class TextlineSynthesis:
             else:
                 font_size = self.config.font_size
 
-            # Render the character to temporary surface
-            text_surface, _ = font.render(
-                char, self.config.text_color, (255, 255, 255, 0), size=font_size,
-                style=style, rotation=skew)
+            if char == "，":
+                random_comma_prob = random.random()
+                if random_comma_prob < 0.2:
+                    char = ","
+
+                small_size_prob = random.random()
+                if small_size_prob < 0.2:
+                    font_size = random.uniform(font_size / 3, font_size)
+
+            text_surface = None
+
+            try:
+                # Render the character to temporary surface
+                text_surface, _ = font.render(
+                    char, self.config.text_color, (255, 255, 255, 0), size=font_size,
+                    style=style, rotation=skew)
+            except pygame.error as err:
+                print(err)
+                char_fonts, char_metrics = self.generate_fonts_and_metrics(
+                    char, fallback_only=True)
+                font_metrics[i] = char_metrics[0]
+                text_surface, _ = char_fonts[0].render(
+                    char, self.config.text_color, (255, 255, 255, 0), size=font_size,
+                    style=style, rotation=skew)
 
             # Correct the x-coordinate for Chinese grid characters
             char_pos_x = pos_x
@@ -273,13 +296,6 @@ class TextlineSynthesis:
             elif self.config.chinese_grid and extra_right == 0 and (
                     i == len(message) - 2 and next_char in "，。！？“”"):
                 pos_x += text_surface.get_width() * 0.7
-
-            # elif self.config.chinese_grid and (char + next_char) in ["：“", "。”", "，”"]:
-            #     pos_x += text_surface.get_width() * 0.3
-
-            # elif self.config.chinese_grid and is_chinese_char[i + 1] and char in "“”":
-            #     used_grid = (pos_x - self.config.margin_left) // grid_size + 1
-            #     pos_x = self.config.margin_left + used_grid * grid_size
 
             elif self.config.chinese_grid and char in "“”":
                 pass
@@ -387,18 +403,21 @@ class TextlineSynthesis:
         sigma = image.shape[0] * self.config.elastic_sigma_ratio
         return elastic_transform(image, alpha, sigma)
 
-    def generate_fonts_and_metrics(self, text):
+    def generate_fonts_and_metrics(self, text, fallback_only=False):
         """Generate fonts and metrics list with fallbacks for the given text"""
 
         fonts = []
         metrics = []
+
+        font_ids = self.config.fallback_font_ids if fallback_only else [
+            self.config.font_id, *self.config.fallback_font_ids]
 
         for char in text:
 
             font = None
             metric = None
 
-            for font_id in [self.config.font_id, *self.config.fallback_font_ids]:
+            for font_id in font_ids:
                 ttfont = self.config.ttfonts[font_id]
                 font = self.config.fonts[font_id]
 
