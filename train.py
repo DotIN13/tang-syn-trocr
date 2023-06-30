@@ -22,7 +22,7 @@ from torch.utils.data import Subset
 from tang_syn import synthesize
 
 FULL_TRAINING = True
-RESUME = False
+RESUME = True
 MAX_LENGTH = 64
 TRAIN_MAX_LENGTH = 32
 
@@ -126,9 +126,7 @@ class OCRDataset(Dataset):
                                          file_name)).convert("RGB")
 
         else:
-            text = self.sample_line_from_texts()
-            text = random_slice(text, max_length=self.max_target_length)
-            bgr_image = synthesize(text)
+            text, bgr_image = self.sample_and_synthesize()
             rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(rgb_image)
 
@@ -199,22 +197,32 @@ class OCRDataset(Dataset):
         file_path, handle_len = random.choice(self.file_handles)
         line_index = random.randint(0, handle_len - 1)
 
-        res = None
-
         # print(file_path, line_index)
+        line = None
+
         with open(file_path, "r", encoding="utf-8") as handle:
-            for i, line in enumerate(handle):
+            for i, lne in enumerate(handle):
                 if i != line_index:
                     continue
 
-                res = line.strip()
+                line = lne.strip()
 
-        if isinstance(res, str) and len(res) > 0:
-            return res
+        if not (isinstance(line, str) and len(line) > 0):
+            raise ValueError(f"Empty line at line {line_index} of {file_path}")
 
         # print(
         #     f"Empty line at line {line_index} of {file_path}, retrying.")
-        return self.sample_line_from_texts()
+        return line
+
+    def sample_and_synthesize(self):
+        try:
+            text = self.sample_line_from_texts()
+            text = random_slice(text, max_length=self.max_target_length)
+            bgr_image = synthesize(text)
+            return text, bgr_image
+        except ValueError as sample_err:
+            print(sample_err)
+            return self.sample_and_synthesize()
 
 
 class EvalDataset(OCRDataset):

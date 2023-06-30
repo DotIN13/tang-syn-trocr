@@ -9,7 +9,7 @@ import pygame
 from fontTools.ttLib import TTFont
 
 warnings.filterwarnings('ignore', category=UserWarning,
-                        module='fontTools.ttLib.tables._p_o_s_t')
+                        module='fontTools.ttLib.tables')
 
 FALLBACK_FONT_NAMES = [
     "NotoSansCJKsc-VF.ttf",

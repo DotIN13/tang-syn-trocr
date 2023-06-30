@@ -240,13 +240,7 @@ class TextlineSynthesis:
                     char, self.config.text_color, (255, 255, 255, 0), size=font_size,
                     style=style, rotation=skew)
             except pygame.error as err:
-                print(err)
-                char_fonts, char_metrics = self.generate_fonts_and_metrics(
-                    char, fallback_only=True)
-                font_metrics[i] = char_metrics[0]
-                text_surface, _ = char_fonts[0].render(
-                    char, self.config.text_color, (255, 255, 255, 0), size=font_size,
-                    style=style, rotation=skew)
+                raise ValueError(f"{message} cannot be rendered.") from err
 
             # Correct the x-coordinate for Chinese grid characters
             char_pos_x = pos_x
@@ -403,35 +397,42 @@ class TextlineSynthesis:
         sigma = image.shape[0] * self.config.elastic_sigma_ratio
         return elastic_transform(image, alpha, sigma)
 
-    def generate_fonts_and_metrics(self, text, fallback_only=False):
+    def generate_font_and_metric(self, char, fallback_only=False):
+        font = None
+        metric = None
+
+        fallback_font_ids = self.config.fallback_font_ids
+
+        font_ids = fallback_font_ids if fallback_only else [
+            self.config.font_id, *fallback_font_ids]
+
+        for font_id in font_ids:
+            ttfont = self.config.ttfonts[font_id]
+            font = self.config.fonts[font_id]
+
+            if can_render(ttfont, char):
+                metric = font.get_metrics(
+                    char, size=self.config.font_size)[0]
+
+            if metric is not None:
+                break
+
+        return font, metric
+
+    def generate_fonts_and_metrics(self, text):
         """Generate fonts and metrics list with fallbacks for the given text"""
 
         fonts = []
         metrics = []
 
-        font_ids = self.config.fallback_font_ids if fallback_only else [
-            self.config.font_id, *self.config.fallback_font_ids]
-
         for char in text:
 
-            font = None
-            metric = None
+            font, metric = self.generate_font_and_metric(
+                char, fallback_only=False)
 
-            for font_id in font_ids:
-                ttfont = self.config.ttfonts[font_id]
-                font = self.config.fonts[font_id]
-
-                if can_render(ttfont, char):
-                    metric = font.get_metrics(
-                        char, size=self.config.font_size)[0]
-
-                if metric is not None:
-                    # print(char, font.name)
-                    break
-
+            # If both the current font and the fallback fonts cannot be used to render the character, raise a ValueError
             if font is None or metric is None:
-                font = self.config.fonts[self.config.fallback_font_ids[0]]
-                metric = font.get_metrics("是", size=self.config.font_size)[0]
+                raise ValueError(f"Unable to generate font metrics for {text}")
 
             fonts.append(font)
             metrics.append(metric)
