@@ -22,7 +22,7 @@ from torch.utils.data import Subset
 from tang_syn import synthesize
 
 FULL_TRAINING = True
-RESUME = True
+RESUME = False
 MAX_LENGTH = 64
 TRAIN_MAX_LENGTH = 32
 
@@ -39,14 +39,18 @@ def load_model():
 
     if FULL_TRAINING:
         vision_hf_model = 'facebook/deit-base-distilled-patch16-384'
-        nlp_hf_model = "hfl/chinese-macbert-base"
+        # nlp_hf_model = "hfl/chinese-macbert-base"
+        nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
 
         # Reference: https://github.com/huggingface/transformers/issues/15823
         # initialize the encoder from a pretrained ViT and the decoder from a pretrained BERT model.
         # Note that the cross-attention layers will be randomly initialized, and need to be fine-tuned on a downstream dataset
         model = VisionEncoderDecoderModel.from_encoder_decoder_pretrained(
             vision_hf_model, nlp_hf_model)
+
+        new_words = ["“", "”", "‘", "’"]  # Add new words
         tokenizer = AutoTokenizer.from_pretrained(nlp_hf_model)
+        tokenizer.add_tokens(new_tokens=new_words)
     else:
         trocr_model = 'checkpoints/checkpoint-308000'
         model = VisionEncoderDecoderModel.from_pretrained(trocr_model)
@@ -56,6 +60,8 @@ def load_model():
         # set special tokens used for creating the decoder_input_ids from the labels
         model.config.decoder_start_token_id = tokenizer.cls_token_id
         model.config.pad_token_id = tokenizer.pad_token_id
+
+        model.decoder.resize_token_embeddings(len(tokenizer))
         model.config.vocab_size = model.config.decoder.vocab_size
 
         # set beam search parameters
@@ -193,19 +199,22 @@ class OCRDataset(Dataset):
         file_path, handle_len = random.choice(self.file_handles)
         line_index = random.randint(0, handle_len - 1)
 
+        res = None
+
         # print(file_path, line_index)
         with open(file_path, "r", encoding="utf-8") as handle:
             for i, line in enumerate(handle):
                 if i != line_index:
                     continue
 
-                line = line.strip()
-                if not line:
-                    print(
-                        f"Empty line at line {line_index} of {file_path}, retrying.")
-                    return self.sample_line_from_texts()
+                res = line.strip()
 
-                return line
+        if isinstance(res, str) and len(res) > 0:
+            return res
+
+        # print(
+        #     f"Empty line at line {line_index} of {file_path}, retrying.")
+        return self.sample_line_from_texts()
 
 
 class EvalDataset(OCRDataset):
@@ -282,26 +291,24 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
         per_device_train_batch_size=32,
-        per_device_eval_batch_size=50,
-        num_train_epochs=1,
+        per_device_eval_batch_size=32,
+        num_train_epochs=2,
         fp16=True,
         learning_rate=4e-5,
         output_dir="./checkpoints",
         logging_dir="./logs",
         logging_strategy="steps",
-        logging_steps=100,
+        logging_steps=50,
         log_level="info",
         save_strategy="steps",
-        save_total_limit=8,
-        save_steps=2000,
+        save_total_limit=5,
+        save_steps=1000,
         evaluation_strategy="steps",
-        eval_steps=2000,
+        eval_steps=1000,
         resume_from_checkpoint="./checkpoints/",
-        dataloader_num_workers=6,
+        dataloader_num_workers=8,
         optim="adamw_torch",
         lr_scheduler_type="linear",
-        warmup_steps=4000,
-        weight_decay=0.01,
         load_best_model_at_end=True,
         metric_for_best_model="niandai_cer",
         greater_is_better=False,
