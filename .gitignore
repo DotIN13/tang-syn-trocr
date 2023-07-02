@@ -2,12 +2,12 @@ venv*
 .python-version
 __pycache__
 
-hw_data
-hw_data.tar
-
 dataset/*
 dataset_archive/*
 dataset_syn/*
+
+testlines
+textlines
 
 data
 aug
@@ -16,9 +16,6 @@ labels
 labels-src
 
 output
-
-*.tsv
-*.txt
 
 checkpoints
 logs
