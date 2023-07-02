@@ -130,6 +130,9 @@ class TextlineSynthesisConfig:
             if file in FALLBACK_FONT_NAMES:
                 FALLBACK_FONT_IDS.append(len(FONTS) - 1)
 
+            if os.environ.get("DEBUG"):
+                break
+
     print(f"Usable font: {len(FONTS)}")
 
     def __init__(self, config={}):
@@ -163,11 +166,11 @@ class TextlineSynthesisConfig:
             random_config["font_size"] = random.randint(
                 random_config["min_font_size"], random_config["max_font_size"])
 
-        font_size_jittor = random.random()
-        if font_size_jittor < random_config["font_size_jittor_prob"]:
-            random_config["font_size_jittor"] = True
-        else:
-            random_config["font_size_jittor"] = False
+        random_config["font_size_jittor"] = (
+            random.random() < random_config["font_size_jittor_prob"])
+
+        random_config["font_weight_jittor"] = (
+            random.random() < random_config["font_weight_jittor_prob"])
 
         random_margin = random_config.get("random_margin", False)
         if random_margin is not None:
@@ -202,10 +205,15 @@ class TextlineSynthesisConfig:
 
         # 40% of the time, apply elastic transform
         elastic_prob = random.random()
-        if elastic_prob < random_config.get('elastic_transform_prob', 0.0):
-            random_config['elastic_transform'] = True
-        else:
-            random_config['elastic_transform'] = False
+        random_config['elastic_transform'] = elastic_prob < random_config.get(
+            'elastic_transform_prob', 0.0)
+
+        random_config["random_crossout"] = (
+            random.random() < random_config["random_crossout_prob"])
+        if random_config["random_crossout"]:
+            random_config["random_crossout_rotation"] = np.random.uniform(
+                -60, 60)
+            random_config["random_crossout_thickness"] = random.randint(1, 3)
 
         return cls(random_config)
 

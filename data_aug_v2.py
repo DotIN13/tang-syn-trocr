@@ -1,4 +1,5 @@
 import random
+from random import choices
 import logging
 
 import cv2
@@ -42,11 +43,37 @@ class ResizePad(object):
         return new_im
 
 
+def create_connected_kernel(min_ones=2, max_ones=3):
+    kernel = np.zeros((3, 3))
+    num_ones = np.random.randint(min_ones, max_ones+1)
+
+    # Possible moves: up, down, left, right
+    moves = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+    # Start at a random position
+    cur_pos = (np.random.randint(3), np.random.randint(3))
+
+    for _ in range(num_ones):
+        kernel[cur_pos] = 1
+
+        # Calculate the next position
+        valid_moves = [move for move in moves if (
+            0 <= cur_pos[0] + move[0] < 3) and (0 <= cur_pos[1] + move[1] < 3)]
+        if valid_moves:
+            cur_move = choices(valid_moves, k=1)[0]
+            cur_pos = (cur_pos[0] + cur_move[0], cur_pos[1] + cur_move[1])
+        else:
+            break
+
+    return kernel
+
+
+# Ref for varying kernel size: Self-supervised Vision Transformers with Data Augmentation Strategies Using Morphological Operations for Writer Retrieval
 class Dilation(torch.nn.Module):
 
-    def __init__(self, kernel=3, device=None):
+    def __init__(self, device="cpu"):
         super().__init__()
-        self.kernel = torch.ones(kernel, kernel)
+        self.kernel = torch.from_numpy(create_connected_kernel())
         if device:
             self.kernel.to(device)
 
@@ -64,9 +91,9 @@ class Dilation(torch.nn.Module):
 
 class Erosion(torch.nn.Module):
 
-    def __init__(self, kernel=3, device=None):
+    def __init__(self, device="cpu"):
         super().__init__()
-        self.kernel = torch.ones(kernel, kernel)
+        self.kernel = torch.from_numpy(create_connected_kernel())
         if device:
             self.kernel.to(device)
 
@@ -175,7 +202,7 @@ class KeepOriginal(torch.nn.Module):
         return img
 
 
-def build_data_aug(size, mode="train", resnet=False, resizepad=False, device=None):
+def build_data_aug(size, mode="train", resnet=False, resizepad=False, device="cpu"):
 
     if mode == 'train':
         return transforms.Compose([
@@ -187,16 +214,17 @@ def build_data_aug(size, mode="train", resnet=False, resizepad=False, device=Non
                 KeepOriginal(),
             ]),
             transforms.RandomChoice([
+                Erosion(device=device),
+                Dilation(device=device),
                 transforms.RandomRotation(degrees=(-3, 3),
                                           expand=True,
                                           fill=(1, 1, 1)),
                 transforms.GaussianBlur(3),
                 transforms.Resize(
-                    size * 4 // 5, InterpolationMode.BILINEAR, antialias=True),
-                Erosion(2),
-                Dilation(2),
+                    size * 3 // 5, InterpolationMode.BILINEAR, antialias=True),
                 KeepOriginal(),
             ]),
+
             transforms.ToImagePIL()
         ])
 
