@@ -1,7 +1,9 @@
+from datetime import datetime
 import os
 from os import path
 import random
 
+import pytz
 import cv2
 import numpy as np
 import pandas as pd
@@ -16,15 +18,18 @@ from PIL import Image
 from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcessor
 from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
 from transformers import default_data_collator
+from transformers import get_scheduler, get_polynomial_decay_schedule_with_warmup
 
 from data_aug_v2 import build_data_aug
 from torch.utils.data import Subset
 from tang_syn import synthesize
 
 FULL_TRAINING = True
-RESUME = True
+RESUME = False
 MAX_LENGTH = 64
 TRAIN_MAX_LENGTH = 32
+
+SHT = pytz.timezone("Asia/Shanghai")
 
 
 def print_summary(result):
@@ -109,7 +114,7 @@ class OCRDataset(Dataset):
 
         if mode == "train":
             self.file_handles = self.load_texts()
-            self.arbitrary_len = 12000000
+            self.arbitrary_len = 8000000
 
     def __len__(self):
         return self.arbitrary_len
@@ -296,6 +301,37 @@ def build_metrics(tokenizer):
 
 def init_trainer(model, tokenizer, compute_metrics, train_dataset,
                  eval_dataset):
+
+    class TangSynTrainer(Seq2SeqTrainer):
+        def create_scheduler(self, num_training_steps, optimizer=None):
+            """
+            Setup the scheduler. The optimizer of the trainer must have been set up either before this method is called or
+            passed as an argument.
+
+            Args:
+                num_training_steps (int): The number of training steps to do.
+            """
+            if self.lr_scheduler is None:
+
+                if self.args.lr_scheduler_type == "polynomial":
+                    print("Using custom polynomial scheduler.")
+                    self.lr_scheduler = get_polynomial_decay_schedule_with_warmup(
+                        optimizer=self.optimizer if optimizer is None else optimizer,
+                        num_warmup_steps=self.args.get_warmup_steps(
+                            num_training_steps),
+                        num_training_steps=num_training_steps,
+                        power=4.0
+                    )
+                else:
+                    self.lr_scheduler = get_scheduler(
+                        self.args.lr_scheduler_type,
+                        optimizer=self.optimizer if optimizer is None else optimizer,
+                        num_warmup_steps=self.args.get_warmup_steps(
+                            num_training_steps),
+                        num_training_steps=num_training_steps,
+                    )
+            return self.lr_scheduler
+
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
         per_device_train_batch_size=32,
@@ -304,7 +340,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         fp16=True,
         learning_rate=4e-5,
         output_dir="./checkpoints",
-        logging_dir="./logs",
+        logging_dir=f"./logs/{datetime.now().astimezone(SHT).strftime('%Y_%m_%d-%p%I_%M_%S')}",
         logging_strategy="steps",
         logging_steps=50,
         log_level="info",
@@ -316,15 +352,17 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         resume_from_checkpoint="./checkpoints/",
         dataloader_num_workers=8,
         optim="adamw_torch",
-        lr_scheduler_type="linear",
+        lr_scheduler_type="polynomial",
+        warmup_ratio=0.02,
+        weight_decay=1e-4,
         load_best_model_at_end=True,
-        metric_for_best_model="niandai_cer",
+        metric_for_best_model="hwdb_loss",
         greater_is_better=False,
         dataloader_pin_memory=True
     )
 
     # instantiate trainer
-    return Seq2SeqTrainer(
+    return TangSynTrainer(
         model=model,
         tokenizer=tokenizer,
         args=training_args,
