@@ -23,7 +23,7 @@ def is_chinese_punct(text):
     return text in "，。！？"
 
 
-def insert_random_chars(message, num_inserts_range=(1, 3)):
+def insert_random_chars(message, num_inserts_range=(1, 2)):
     num_inserts = np.random.randint(
         num_inserts_range[0], num_inserts_range[1] + 1)
 
@@ -106,8 +106,8 @@ def apply_mask_with_ellipses(image, text_color, num_ellipses=5):
         startAngle = random.randint(0, 360)
         # making sure the endAngle is greater than the startAngle
         endAngle = random.randint(startAngle, startAngle + 180)
-        color = [random.randint(max(0, channel - 20),
-                                min(255, channel + 20))
+        color = [random.randint(max(0, channel - 5),
+                                min(255, channel + 5))
                  for channel in text_color]
         thickness = -1
 
@@ -413,12 +413,14 @@ class TextlineSynthesis:
 
             # Add 1 to make sure the last grid is generated
             x_max = width - self.config.margin_right - grid_size + 1
+            
+            thickness = random.randint(1, 2)
 
             while x <= x_max:
                 top_left = (x, y)
                 bottom_right = (x + grid_size, y + grid_size)
                 cv2.rectangle(grid_image, top_left, bottom_right,
-                              self.config.box_color, thickness=1)
+                              self.config.box_color, thickness=thickness)
                 x += grid_size
 
             return grid_image
@@ -505,9 +507,9 @@ class TextlineSynthesis:
 
         return fonts, metrics
 
-    def create_crossout_surface(self, char_surface_size, min_lines=4, max_lines=6):
+    def create_crossout_surface(self, char_surface_size, min_lines=4, max_lines=6, min_circles=0, max_circles=4):
         # Create a transparent surface for the lines
-        line_surface = pygame.Surface(char_surface_size, pygame.SRCALPHA)
+        crossout_surface = pygame.Surface(char_surface_size, pygame.SRCALPHA)
 
         # Determine number of lines to draw
         num_lines = np.random.randint(min_lines, max_lines+1)
@@ -524,16 +526,37 @@ class TextlineSynthesis:
 
             start_y = int((i + 1) * gap) + random.randint(-1, 1)
             end_y = start_y + random.randint(-2, 2)
-            pygame.draw.line(line_surface, self.config.text_color,
-                             (start_x, start_y), (end_x, end_y), self.config.random_crossout_thickness)
+
+            thickness = random.randint(2, 3)
+            pygame.draw.line(crossout_surface, (0, 0, 0),
+                             (start_x, start_y), (end_x, end_y), thickness)
+
+        # Determine number of circles to draw
+        num_circles = np.random.randint(min_circles, max_circles)
+
+        for i in range(num_circles):
+            # Random radius
+            radius = random.randint(
+                char_surface_size[0] // 8, char_surface_size[0] // 2)
+
+            # Random position for the circle's center within the surface
+            center_x = random.randint(
+                char_surface_size[0] // 8, char_surface_size[0] // 2)
+            center_y = random.randint(
+                char_surface_size[0] // 8, char_surface_size[0] // 2)
+
+            thickness = random.randint(1, 3)
+            pygame.draw.circle(crossout_surface, (0, 0, 0), (center_x,
+                               center_y), radius, thickness)
 
         # Rotate the surface
         # Random rotation in degrees
-        rotation = self.config.random_crossout_rotation + random.uniform(-2, 2)
-        line_surface = pygame.transform.rotate(
-            line_surface, rotation)
+        rotation = self.config.random_crossout_rotation + \
+            random.uniform(-10, 10)
+        crossout_surface = pygame.transform.rotate(
+            crossout_surface, rotation)
 
-        return line_surface
+        return crossout_surface
 
 
 def synthesize(message):

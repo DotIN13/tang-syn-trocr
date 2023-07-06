@@ -78,12 +78,12 @@ class Dilation(torch.nn.Module):
             self.kernel.to(device)
 
     def forward(self, img):
-        # return img.filter(ImageFilter.MaxFilter(self.kernel))
-        if len(img.shape) == 4:
-            return morphology.dilation(img, self.kernel)
 
-        img = img.unsqueeze(0)
-        return morphology.dilation(img, self.kernel).squeeze()
+        if len(img.shape) == 3:
+            img = img.unsqueeze(0)
+            return morphology.dilation(img, self.kernel).squeeze()
+        else:
+            return morphology.dilation(img, self.kernel)
 
     def __repr__(self):
         return self.__class__.__name__ + f'(kernel={self.kernel})'
@@ -98,11 +98,12 @@ class Erosion(torch.nn.Module):
             self.kernel.to(device)
 
     def forward(self, img):
-        if len(img.shape) == 4:
-            return morphology.erosion(img, self.kernel)
 
-        img = img.unsqueeze(0)
-        return morphology.erosion(img, self.kernel).squeeze()
+        if len(img.shape) == 3:
+            img = img.unsqueeze(0)
+            return morphology.erosion(img, self.kernel).squeeze()
+        else:
+            return morphology.erosion(img, self.kernel)
 
     def __repr__(self):
         return self.__class__.__name__ + f'(kernel={self.kernel})'
@@ -136,8 +137,10 @@ class Underline(torch.nn.Module):
                 y1 = min(int(torch.max(black_pixels[1])), height - 1)
                 x0 = max(int(torch.min(black_pixels[2])), 0)
                 x1 = min(int(torch.max(black_pixels[2])), width - 1)
-
                 # print(y1, x0, x1)
+
+                if x0 - x1 < width * 0.2:
+                    continue
 
                 for x in range(x0, x1):
                     for y in range(y1, max(y1 - 3, 0), -1):
@@ -159,6 +162,16 @@ class RandomInkSpots(torch.nn.Module):
         self.ink_spot_size = ink_spot_size
 
     def forward(self, img):
+        if len(img.shape) == 4:  # if image is BCHW
+            batch_size = img.shape[0]
+            for i in range(batch_size):
+                img[i] = self.ink_spot_transform(img[i])
+        else:  # if image is CHW
+            img = self.ink_spot_transform(img)
+
+        return img
+
+    def ink_spot_transform(self, img):
         # Convert PyTorch tensor to numpy array
         img = img.permute(1, 2, 0).numpy()
 
@@ -209,22 +222,24 @@ def build_data_aug(size, mode="train", resnet=False, resizepad=False, device="cp
             transforms.ToImageTensor(),
             transforms.ConvertImageDtype(dtype=torch.float32),
             transforms.RandomChoice([
-                Underline(),
-                RandomInkSpots(),
-                KeepOriginal(),
-            ]),
-            transforms.RandomChoice([
                 Erosion(device=device),
                 Dilation(device=device),
+                KeepOriginal()
+            ]),
+            transforms.RandomChoice([
+                Underline(),
+                # RandomInkSpots(),
+                KeepOriginal()
+            ]),
+            transforms.RandomChoice([
                 transforms.RandomRotation(degrees=(-3, 3),
                                           expand=True,
                                           fill=(1, 1, 1)),
                 transforms.GaussianBlur(3),
                 transforms.Resize(
-                    size * 3 // 5, InterpolationMode.BILINEAR, antialias=True),
+                    size // 2, InterpolationMode.BILINEAR, antialias=True),
                 KeepOriginal(),
             ]),
-
             transforms.ToImagePIL()
         ])
 

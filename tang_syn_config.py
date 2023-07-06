@@ -213,7 +213,7 @@ class TextlineSynthesisConfig:
         if random_config["random_crossout"]:
             random_config["random_crossout_rotation"] = np.random.uniform(
                 -60, 60)
-            random_config["random_crossout_thickness"] = random.randint(1, 3)
+            random_config["random_crossout_thickness"] = random.randint(2, 3)
 
         return cls(random_config)
 

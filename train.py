@@ -44,8 +44,8 @@ def load_model():
 
     if FULL_TRAINING:
         vision_hf_model = 'facebook/deit-base-distilled-patch16-384'
-        # nlp_hf_model = "hfl/chinese-macbert-base"
-        nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
+        nlp_hf_model = "hfl/chinese-macbert-base"
+        # nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
 
         # Reference: https://github.com/huggingface/transformers/issues/15823
         # initialize the encoder from a pretrained ViT and the decoder from a pretrained BERT model.
@@ -114,7 +114,7 @@ class OCRDataset(Dataset):
 
         if mode == "train":
             self.file_handles = self.load_texts()
-            self.arbitrary_len = 8000000
+            self.arbitrary_len = 20000000
 
     def __len__(self):
         return self.arbitrary_len
@@ -320,7 +320,8 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
                         num_warmup_steps=self.args.get_warmup_steps(
                             num_training_steps),
                         num_training_steps=num_training_steps,
-                        power=4.0
+                        power=1.0,
+                        lr_end=5e-7
                     )
                 else:
                     self.lr_scheduler = get_scheduler(
@@ -334,31 +335,32 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
 
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
-        per_device_train_batch_size=32,
-        per_device_eval_batch_size=32,
-        num_train_epochs=1,
+        per_device_train_batch_size=200,
+        per_device_eval_batch_size=52,
+        gradient_accumulation_steps=4,
+        gradient_checkpointing=True,
+        num_train_epochs=2,
         fp16=True,
-        learning_rate=4e-5,
+        learning_rate=5e-5,
         output_dir="./checkpoints",
         logging_dir=f"./logs/{datetime.now().astimezone(SHT).strftime('%Y_%m_%d-%p%I_%M_%S')}",
         logging_strategy="steps",
-        logging_steps=50,
+        logging_steps=1,
         log_level="info",
         save_strategy="steps",
-        save_total_limit=5,
-        save_steps=1000,
+        save_total_limit=8,
+        save_steps=100,
         evaluation_strategy="steps",
-        eval_steps=1000,
+        eval_steps=100,
         resume_from_checkpoint="./checkpoints/",
         dataloader_num_workers=8,
         optim="adamw_torch",
         lr_scheduler_type="polynomial",
-        warmup_ratio=0.02,
-        weight_decay=1e-4,
+        warmup_ratio=0.05,
         load_best_model_at_end=True,
-        metric_for_best_model="hwdb_loss",
+        metric_for_best_model="hwdb_cer",
         greater_is_better=False,
-        dataloader_pin_memory=True
+        dataloader_pin_memory=True,
     )
 
     # instantiate trainer
