@@ -139,7 +139,7 @@ class Underline(torch.nn.Module):
                 x1 = min(int(torch.max(black_pixels[2])), width - 1)
                 # print(y1, x0, x1)
 
-                if x0 - x1 < width * 0.2:
+                if abs(x0 - x1) < width * 0.2:
                     continue
 
                 for x in range(x0, x1):
@@ -156,7 +156,7 @@ class Underline(torch.nn.Module):
 
 class RandomInkSpots(torch.nn.Module):
 
-    def __init__(self, ink_spots_num=10, ink_spot_size=5):
+    def __init__(self, ink_spots_num=3, ink_spot_size=5):
         super().__init__()
         self.ink_spots_num = ink_spots_num
         self.ink_spot_size = ink_spot_size
@@ -175,11 +175,18 @@ class RandomInkSpots(torch.nn.Module):
         # Convert PyTorch tensor to numpy array
         img = img.permute(1, 2, 0).numpy()
 
-        spot_num = random.randint(1, self.ink_spots_num)
+        # Create a new numpy array with the correct memory layout
+        img = np.ascontiguousarray(img)
+
+        # The input must be a torch tensor of float dtype
+        img = (img * 255).astype(np.uint8)
+
+        spot_num = max(0, int(np.random.normal(self.ink_spots_num, 5)))
 
         # Random color for each ink spot
         colors = [(random.randint(0, 255), random.randint(
             0, 255), random.randint(0, 255)) for _ in range(3)]
+        colors.append((0, 0, 0))
 
         for _ in range(spot_num):
             # Random position for the center of the ink spot
@@ -201,6 +208,7 @@ class RandomInkSpots(torch.nn.Module):
             cv2.fillPoly(img, [points], random.choice(colors))
 
         # Convert numpy array back to PyTorch tensor
+        img = (img / 255.0)
         img = torch.from_numpy(img).permute(2, 0, 1)
 
         return img
@@ -225,12 +233,12 @@ def build_data_aug(size, mode="train", resnet=False, resizepad=False, device="cp
                 Erosion(device=device),
                 Dilation(device=device),
                 KeepOriginal()
-            ]),
+            ], p=[.33, .33, .34]),
             transforms.RandomChoice([
                 Underline(),
-                # RandomInkSpots(),
+                RandomInkSpots(),
                 KeepOriginal()
-            ]),
+            ], p=[.1, .2, .7]),
             transforms.RandomChoice([
                 transforms.RandomRotation(degrees=(-3, 3),
                                           expand=True,
@@ -239,7 +247,7 @@ def build_data_aug(size, mode="train", resnet=False, resizepad=False, device="cp
                 transforms.Resize(
                     size // 2, InterpolationMode.BILINEAR, antialias=True),
                 KeepOriginal(),
-            ]),
+            ], p=[.2, .2, .2, .4]),
             transforms.ToImagePIL()
         ])
 

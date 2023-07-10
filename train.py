@@ -1,6 +1,7 @@
 from datetime import datetime
 import os
 from os import path
+from glob import iglob
 import random
 
 import pytz
@@ -25,7 +26,7 @@ from torch.utils.data import Subset
 from tang_syn import synthesize
 
 FULL_TRAINING = True
-RESUME = False
+RESUME = True
 MAX_LENGTH = 64
 TRAIN_MAX_LENGTH = 32
 
@@ -333,17 +334,24 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
                     )
             return self.lr_scheduler
 
+    logging_dir = None
+
+    if RESUME:
+        logging_dir = max(iglob("./logs/*/"), key=os.path.getctime)
+    else:
+        logging_dir = f"./logs/{datetime.now().astimezone(SHT).strftime('%Y_%m_%d-%p%I_%M_%S')}"
+
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
-        per_device_train_batch_size=200,
-        per_device_eval_batch_size=52,
+        per_device_train_batch_size=172,
+        per_device_eval_batch_size=48,
         gradient_accumulation_steps=4,
         gradient_checkpointing=True,
         num_train_epochs=2,
         fp16=True,
         learning_rate=5e-5,
         output_dir="./checkpoints",
-        logging_dir=f"./logs/{datetime.now().astimezone(SHT).strftime('%Y_%m_%d-%p%I_%M_%S')}",
+        logging_dir=logging_dir,
         logging_strategy="steps",
         logging_steps=1,
         log_level="info",
@@ -356,7 +364,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         dataloader_num_workers=8,
         optim="adamw_torch",
         lr_scheduler_type="polynomial",
-        warmup_ratio=0.05,
+        warmup_ratio=0.01,
         load_best_model_at_end=True,
         metric_for_best_model="hwdb_cer",
         greater_is_better=False,
