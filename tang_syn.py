@@ -197,11 +197,11 @@ class TextlineSynthesis:
             return char, font_size
 
         random_comma_prob = random.random()
-        if random_comma_prob < 0.2:
+        if random_comma_prob < 0.05:
             char = ","
 
         small_size_prob = random.random()
-        if small_size_prob < 0.2:
+        if small_size_prob < 0.05:
             font_size = random.uniform(font_size / 3, font_size)
 
         return char, font_size

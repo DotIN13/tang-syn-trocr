@@ -181,7 +181,7 @@ class RandomInkSpots(torch.nn.Module):
         # The input must be a torch tensor of float dtype
         img = (img * 255).astype(np.uint8)
 
-        spot_num = max(0, int(np.random.normal(self.ink_spots_num, 5)))
+        spot_num = max(0, int(np.random.normal(self.ink_spots_num, 3)))
 
         # Random color for each ink spot
         colors = [(random.randint(0, 255), random.randint(
