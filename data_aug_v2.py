@@ -181,7 +181,7 @@ class RandomInkSpots(torch.nn.Module):
         # The input must be a torch tensor of float dtype
         img = (img * 255).astype(np.uint8)
 
-        spot_num = max(0, int(np.random.normal(self.ink_spots_num, 3)))
+        spot_num = max(1, int(np.random.normal(self.ink_spots_num, 3)))
 
         # Random color for each ink spot
         colors = [(random.randint(0, 255), random.randint(
@@ -223,7 +223,37 @@ class KeepOriginal(torch.nn.Module):
         return img
 
 
-def build_data_aug(size, mode="train", resnet=False, resizepad=False, device="cpu"):
+# def build_data_aug(size, mode="train", resnet=False, resizepad=False, device="cpu"):
+
+#     if mode == 'train':
+#         return transforms.Compose([
+#             transforms.ToImageTensor(),
+#             transforms.ConvertImageDtype(dtype=torch.float32),
+#             transforms.RandomChoice([
+#                 Erosion(device=device),
+#                 Dilation(device=device),
+#                 KeepOriginal()
+#             ], p=[.33, .33, .34]),
+#             transforms.RandomChoice([
+#                 Underline(),
+#                 RandomInkSpots(),
+#                 KeepOriginal()
+#             ], p=[.1, .2, .7]),
+#             transforms.RandomChoice([
+#                 transforms.RandomRotation(degrees=(-3, 3),
+#                                           expand=True,
+#                                           fill=(1, 1, 1)),
+#                 transforms.GaussianBlur(3),
+#                 transforms.Resize(
+#                     size // 2, InterpolationMode.BILINEAR, antialias=True),
+#                 KeepOriginal(),
+#             ], p=[.2, .2, .2, .4]),
+#             transforms.ToImagePIL()
+#         ])
+
+#     return None
+
+def build_data_aug(size, mode="train", device="cpu"):
 
     if mode == 'train':
         return transforms.Compose([
@@ -232,14 +262,8 @@ def build_data_aug(size, mode="train", resnet=False, resizepad=False, device="cp
             transforms.RandomChoice([
                 Erosion(device=device),
                 Dilation(device=device),
-                KeepOriginal()
-            ], p=[.33, .33, .34]),
-            transforms.RandomChoice([
                 Underline(),
                 RandomInkSpots(),
-                KeepOriginal()
-            ], p=[.1, .2, .7]),
-            transforms.RandomChoice([
                 transforms.RandomRotation(degrees=(-3, 3),
                                           expand=True,
                                           fill=(1, 1, 1)),
@@ -247,7 +271,7 @@ def build_data_aug(size, mode="train", resnet=False, resizepad=False, device="cp
                 transforms.Resize(
                     size // 2, InterpolationMode.BILINEAR, antialias=True),
                 KeepOriginal(),
-            ], p=[.2, .2, .2, .4]),
+            ]),
             transforms.ToImagePIL()
         ])
 

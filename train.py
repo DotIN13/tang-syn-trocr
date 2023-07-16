@@ -26,9 +26,8 @@ from torch.utils.data import Subset
 from tang_syn import synthesize
 
 FULL_TRAINING = True
-RESUME = True
+RESUME = False
 MAX_LENGTH = 64
-TRAIN_MAX_LENGTH = 32
 
 SHT = pytz.timezone("Asia/Shanghai")
 
@@ -36,7 +35,6 @@ SHT = pytz.timezone("Asia/Shanghai")
 def print_summary(result):
     print(f"Time: {result.metrics['train_runtime']:.2f}")
     print(f"Samples/second: {result.metrics['train_samples_per_second']:.2f}")
-    print_gpu_utilization()
 
 
 def load_model():
@@ -45,8 +43,8 @@ def load_model():
 
     if FULL_TRAINING:
         vision_hf_model = 'facebook/deit-base-distilled-patch16-384'
-        nlp_hf_model = "hfl/chinese-macbert-base"
-        # nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
+        # nlp_hf_model = "hfl/chinese-macbert-base"
+        nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
 
         # Reference: https://github.com/huggingface/transformers/issues/15823
         # initialize the encoder from a pretrained ViT and the decoder from a pretrained BERT model.
@@ -81,7 +79,7 @@ def load_model():
     return model, tokenizer
 
 
-def random_slice(s, min_length=1, max_length=20):
+def random_slice(s, min_length=1, max_length=MAX_LENGTH):
     length = random.randint(min_length, max_length)
 
     if len(s) <= length:
@@ -100,7 +98,7 @@ class OCRDataset(Dataset):
                  processor,
                  tokenizer,
                  mode="train",
-                 max_target_length=32,
+                 max_target_length=MAX_LENGTH,
                  device=None):
         self.dataset_dir = dataset_dir
         self.labels_dir = labels_dir
@@ -115,7 +113,7 @@ class OCRDataset(Dataset):
 
         if mode == "train":
             self.file_handles = self.load_texts()
-            self.arbitrary_len = 20000000
+            self.arbitrary_len = 7200000
 
     def __len__(self):
         return self.arbitrary_len
@@ -246,12 +244,12 @@ def load_datasets(processor, tokenizer):
                                processor=processor,
                                mode="train",
                                transform=build_data_aug(64, "train"),
-                               max_target_length=TRAIN_MAX_LENGTH)
+                               max_target_length=MAX_LENGTH)
 
     # Define the number of samples to keep in eval dataset
 
     eval_dataset = EvalDataset(dataset_dir=dataset_dir,
-                               labels_dir="dataset/labels/test",
+                               labels_dir="dataset/labels/test-ic13",
                                tokenizer=tokenizer,
                                processor=processor,
                                mode="eval",
@@ -322,7 +320,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
                             num_training_steps),
                         num_training_steps=num_training_steps,
                         power=1.0,
-                        lr_end=5e-7
+                        lr_end=1e-7
                     )
                 else:
                     self.lr_scheduler = get_scheduler(
@@ -343,11 +341,11 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
 
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
-        per_device_train_batch_size=172,
+        per_device_train_batch_size=180,
         per_device_eval_batch_size=48,
         gradient_accumulation_steps=4,
         gradient_checkpointing=True,
-        num_train_epochs=2,
+        num_train_epochs=1,
         fp16=True,
         learning_rate=5e-5,
         output_dir="./checkpoints",
@@ -361,10 +359,11 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         evaluation_strategy="steps",
         eval_steps=100,
         resume_from_checkpoint="./checkpoints/",
-        dataloader_num_workers=8,
+        dataloader_num_workers=4,
         optim="adamw_torch",
-        lr_scheduler_type="polynomial",
+        lr_scheduler_type="cosine",
         warmup_ratio=0.01,
+        weight_decay=1e-4,
         load_best_model_at_end=True,
         metric_for_best_model="hwdb_cer",
         greater_is_better=False,

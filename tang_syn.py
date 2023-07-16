@@ -296,7 +296,9 @@ class TextlineSynthesis:
                 font, font_weight, base_skew)
 
             # Randomize chinese comma
-            char, font_size = self.preprocess_chinese_comma(char, font_size)
+            if self.config.chinese_grid:
+                char, font_size = self.preprocess_chinese_comma(
+                    char, font_size)
 
             # Create character surface
             text_surface = self.render_character(
@@ -413,7 +415,7 @@ class TextlineSynthesis:
 
             # Add 1 to make sure the last grid is generated
             x_max = width - self.config.margin_right - grid_size + 1
-            
+
             thickness = random.randint(1, 2)
 
             while x <= x_max:
