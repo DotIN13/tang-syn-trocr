@@ -156,7 +156,7 @@ class Underline(torch.nn.Module):
 
 class RandomInkSpots(torch.nn.Module):
 
-    def __init__(self, ink_spots_num=3, ink_spot_size=5):
+    def __init__(self, ink_spots_num=2, ink_spot_size=3):
         super().__init__()
         self.ink_spots_num = ink_spots_num
         self.ink_spot_size = ink_spot_size
@@ -181,7 +181,7 @@ class RandomInkSpots(torch.nn.Module):
         # The input must be a torch tensor of float dtype
         img = (img * 255).astype(np.uint8)
 
-        spot_num = max(1, int(np.random.normal(self.ink_spots_num, 3)))
+        spot_num = max(1, int(np.random.normal(self.ink_spots_num, 2)))
 
         # Random color for each ink spot
         colors = [(random.randint(0, 255), random.randint(

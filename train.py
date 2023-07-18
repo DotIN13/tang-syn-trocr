@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from PIL import Image
 
-from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcessor
+from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcessor, AutoImageProcessor
 from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
 from transformers import default_data_collator
 from transformers import get_scheduler, get_polynomial_decay_schedule_with_warmup
@@ -43,14 +43,17 @@ def load_model():
 
     if FULL_TRAINING:
         vision_hf_model = 'facebook/deit-base-distilled-patch16-384'
-        # nlp_hf_model = "hfl/chinese-macbert-base"
-        nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
+        nlp_hf_model = "hfl/chinese-macbert-base"
+        # nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
 
         # Reference: https://github.com/huggingface/transformers/issues/15823
         # initialize the encoder from a pretrained ViT and the decoder from a pretrained BERT model.
         # Note that the cross-attention layers will be randomly initialized, and need to be fine-tuned on a downstream dataset
         model = VisionEncoderDecoderModel.from_encoder_decoder_pretrained(
             vision_hf_model, nlp_hf_model)
+
+        processor = AutoImageProcessor.from_pretrained(
+            vision_hf_model, do_center_crop=False, size=384, resample=2)
 
         new_words = ["“", "”", "‘", "’"]  # Add new words
         tokenizer = AutoTokenizer.from_pretrained(nlp_hf_model)
@@ -76,7 +79,7 @@ def load_model():
         model.config.length_penalty = 2.0
         model.config.num_beams = 4
 
-    return model, tokenizer
+    return model, processor, tokenizer
 
 
 def random_slice(s, min_length=1, max_length=MAX_LENGTH):
@@ -113,7 +116,7 @@ class OCRDataset(Dataset):
 
         if mode == "train":
             self.file_handles = self.load_texts()
-            self.arbitrary_len = 7200000
+            self.arbitrary_len = 32000000
 
     def __len__(self):
         return self.arbitrary_len
@@ -320,7 +323,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
                             num_training_steps),
                         num_training_steps=num_training_steps,
                         power=1.0,
-                        lr_end=1e-7
+                        lr_end=5e-6
                     )
                 else:
                     self.lr_scheduler = get_scheduler(
@@ -341,9 +344,9 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
 
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
-        per_device_train_batch_size=180,
+        per_device_train_batch_size=172,
         per_device_eval_batch_size=48,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=8,
         gradient_checkpointing=True,
         num_train_epochs=1,
         fp16=True,
@@ -361,8 +364,8 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         resume_from_checkpoint="./checkpoints/",
         dataloader_num_workers=4,
         optim="adamw_torch",
-        lr_scheduler_type="cosine",
-        warmup_ratio=0.01,
+        lr_scheduler_type="polynomial",
+        warmup_ratio=0.05,
         weight_decay=1e-4,
         load_best_model_at_end=True,
         metric_for_best_model="hwdb_cer",
@@ -409,11 +412,7 @@ def save_checkpoint(trainer):
 
 
 if __name__ == "__main__":
-    # processor = TrOCRProcessor.from_pretrained(
-    #     "microsoft/trocr-base-handwritten")
-    processor = TrOCRProcessor.from_pretrained(
-        "microsoft/trocr-base-handwritten")
-    model, tokenizer = load_model()
+    model, processor, tokenizer = load_model()
     compute_metrics = build_metrics(tokenizer)
     train_dataset, eval_dataset = load_datasets(processor, tokenizer)
     trainer = init_trainer(model, tokenizer, compute_metrics, train_dataset,

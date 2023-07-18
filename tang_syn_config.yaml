@@ -55,4 +55,4 @@ elastic_sigma_ratio: 0.22
 
 simplified_fonts_only: true
 
-random_crossout_prob: 0.05
+random_crossout_prob: 0.005
