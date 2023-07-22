@@ -52,8 +52,9 @@ def load_model():
         model = VisionEncoderDecoderModel.from_encoder_decoder_pretrained(
             vision_hf_model, nlp_hf_model)
 
-        processor = AutoImageProcessor.from_pretrained(
-            vision_hf_model, do_center_crop=False, size=384, resample=2)
+        processor = TrOCRProcessor.from_pretrained(
+            "microsoft/trocr-base-handwritten", size=384, resample=2,
+            image_mean=[0.485, 0.456, 0.406], image_std=[0.229, 0.224, 0.225])
 
         new_words = ["“", "”", "‘", "’"]  # Add new words
         tokenizer = AutoTokenizer.from_pretrained(nlp_hf_model)
@@ -111,12 +112,17 @@ class OCRDataset(Dataset):
         self.mode = mode
         self.max_target_length = max_target_length
         self.tokenizer = tokenizer
-        self.df = self.build_df()
-        self.df_len = len(self.df)
 
-        if mode == "train":
+        if mode == "online":
+            self.df = None
+            self.df_len = 0
+        else:
+            self.df = self.build_df()
+            self.df_len = len(self.df)
+
+        if mode == "train" or mode == "online":
             self.file_handles = self.load_texts()
-            self.arbitrary_len = 32000000
+            self.arbitrary_len = 16000000
 
     def __len__(self):
         return self.arbitrary_len
@@ -245,7 +251,7 @@ def load_datasets(processor, tokenizer):
                                labels_dir="dataset/labels/train",
                                tokenizer=tokenizer,
                                processor=processor,
-                               mode="train",
+                               mode="online",
                                transform=build_data_aug(64, "train"),
                                max_target_length=MAX_LENGTH)
 
@@ -344,10 +350,10 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
 
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
-        per_device_train_batch_size=172,
+        per_device_train_batch_size=24,
         per_device_eval_batch_size=48,
         gradient_accumulation_steps=8,
-        gradient_checkpointing=True,
+        # gradient_checkpointing=True,
         num_train_epochs=1,
         fp16=True,
         learning_rate=5e-5,
@@ -365,8 +371,8 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         dataloader_num_workers=4,
         optim="adamw_torch",
         lr_scheduler_type="polynomial",
-        warmup_ratio=0.05,
-        weight_decay=1e-4,
+        warmup_steps=768,
+        weight_decay=0.01,
         load_best_model_at_end=True,
         metric_for_best_model="hwdb_cer",
         greater_is_better=False,
