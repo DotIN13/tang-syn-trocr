@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 from tang_syn_config import TextlineSynthesisConfig, can_render
 
 # TODO: Add support for single quotes
-# TODO: Add support for the creation of striken-through or covered characters
 
 
 def is_chinese(text):
@@ -80,8 +79,9 @@ def elastic_transform(image, alpha, sigma):
 
     x, y, z = np.meshgrid(np.arange(shape[1]), np.arange(
         shape[0]), np.arange(shape[2]))
-    indexes = np.reshape(y+dy, (-1, 1)), np.reshape(x+dx,
-                                                    (-1, 1)), np.reshape(z+dz, (-1, 1))
+    indexes = (np.reshape(y+dy, (-1, 1)),
+               np.reshape(x+dx, (-1, 1)),
+               np.reshape(z+dz, (-1, 1)))
 
     distored_image = map_coordinates(image, indexes, order=1, mode="reflect")
     return distored_image.reshape(image.shape)
@@ -154,6 +154,7 @@ class TextlineSynthesis:
     def get_grid_size(self):
         if self.config.chinese_grid:
             return self.config.font_size + self.config.chinese_grid_padding
+
         return self.config.graph_grid_size
 
     def starting_position(self, text_height):
@@ -429,8 +430,8 @@ class TextlineSynthesis:
 
         # If graph grid is enabled, draw a grid of boxes
         if self.config.graph_grid:
-            x = 0
-            y = 0
+            x = start_pos_x = random.randint(-grid_size, 0)
+            y = start_pos_y = random.randint(-grid_size, 0)
 
             while x < width:
 
@@ -442,7 +443,7 @@ class TextlineSynthesis:
                     y += grid_size
 
                 x += grid_size
-                y = 0
+                y = start_pos_y
 
             return grid_image
 
@@ -469,16 +470,13 @@ class TextlineSynthesis:
         font = None
         metric = None
 
-        fallback_font_ids = self.config.fallback_font_ids
+        fallback_fonts = TextlineSynthesisConfig.FALLBACK_FONTS
+        fonts = fallback_fonts if fallback_only else [
+            self.config.font, *fallback_fonts]
 
-        font_ids = fallback_font_ids if fallback_only else [
-            self.config.font_id, *fallback_font_ids]
+        for (font, cmaps) in fonts:
 
-        for font_id in font_ids:
-            ttfont = self.config.ttfonts[font_id]
-            font = self.config.fonts[font_id]
-
-            if can_render(ttfont, char):
+            if can_render(cmaps, char):
                 metric = font.get_metrics(
                     char, size=self.config.font_size)[0]
 
