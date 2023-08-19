@@ -2,14 +2,12 @@ import random
 from random import choices
 import logging
 
-import cv2
-import torchvision.transforms.v2 as transforms
-from torchvision.transforms.functional import InterpolationMode, rgb_to_grayscale
-from PIL import Image
-import torch
-from kornia import morphology
 import numpy as np
-
+import cv2
+import torch
+import torchvision.transforms.v2 as transforms
+from torchvision.transforms.v2.functional import InterpolationMode, rgb_to_grayscale, pad
+from kornia import morphology
 
 # 0: InterpolationMode.NEAREST,
 # 2: InterpolationMode.BILINEAR,
@@ -21,29 +19,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-class ResizePad(object):
-
-    def __init__(self, imgH=64, imgW=1200, keep_ratio_with_pad=True):
-        self.imgH = imgH
-        self.imgW = imgW
-        assert keep_ratio_with_pad == True
-        self.keep_ratio_with_pad = keep_ratio_with_pad
-
-    def __call__(self, im):
-
-        old_size = im.size  # old_size[0] is in (width, height) format
-
-        ratio = float(self.imgH) / old_size[1]
-        new_size = tuple([int(x * ratio) for x in old_size])
-        im = im.resize(new_size, Image.BICUBIC)
-
-        new_im = Image.new("RGB", (self.imgW, self.imgH))
-        new_im.paste(im, (0, 0))
-
-        return new_im
-
-
 def create_connected_kernel(min_ones=2, max_ones=3):
+    """Create a random 3x3 kernel with a random number of ones connected to each other"""
     kernel = np.zeros((3, 3))
     num_ones = np.random.randint(min_ones, max_ones+1)
 
@@ -214,6 +191,20 @@ class RandomInkSpots(torch.nn.Module):
         return img
 
 
+class ResizePad(torch.nn.Module):
+    """Resize and pad the image to a fixed size"""
+
+    def __init__(self, width=1200):
+        super().__init__()
+        self.width = width
+
+    def forward(self, img):
+        if img.shape[-1] < self.width:
+            return pad(img, (0, 0, self.width - img.shape[-1], 0), padding_mode='edge')
+
+        return img
+
+
 class KeepOriginal(torch.nn.Module):
 
     def __init__(self):
@@ -253,12 +244,15 @@ class KeepOriginal(torch.nn.Module):
 
 #     return None
 
-def build_data_aug(size, mode="train", device="cpu"):
+def build_data_aug(height=64, width=1024, mode="train", resizepad=False, device="cpu"):
+
+    aug_steps = [
+        transforms.ToImageTensor(),
+        transforms.ConvertImageDtype(dtype=torch.float64),
+    ]
 
     if mode == 'train':
-        return transforms.Compose([
-            transforms.ToImageTensor(),
-            transforms.ConvertImageDtype(dtype=torch.float32),
+        aug_steps.append(
             transforms.RandomChoice([
                 Erosion(device=device),
                 Dilation(device=device),
@@ -269,10 +263,14 @@ def build_data_aug(size, mode="train", device="cpu"):
                                           fill=(1, 1, 1)),
                 transforms.GaussianBlur(3),
                 transforms.Resize(
-                    size // 2, InterpolationMode.BILINEAR, antialias=True),
+                    height // 2, InterpolationMode.BILINEAR, antialias=True),
                 KeepOriginal(),
-            ]),
-            transforms.ToImagePIL()
-        ])
+            ])
+        )
 
-    return None
+    if resizepad:
+        aug_steps.append(ResizePad(width=width))
+
+    aug_steps.append(transforms.ToImagePIL())
+
+    return transforms.Compose(aug_steps)

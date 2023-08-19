@@ -9,20 +9,20 @@ import cv2
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 import evaluate
-
 from tqdm import tqdm
-
 from PIL import Image
 
-from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcessor, AutoImageProcessor
+# Override default transformers trainer_utils
+import lib.trainer_utils
+
+from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcessor
 from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
 from transformers import default_data_collator
 from transformers import get_scheduler, get_polynomial_decay_schedule_with_warmup
 
 from data_aug_v2 import build_data_aug
-from torch.utils.data import Subset
 from tang_syn import synthesize
 
 FULL_TRAINING = True
@@ -41,6 +41,10 @@ def load_model():
     model = None
     tokenizer = None
 
+    processor = TrOCRProcessor.from_pretrained(
+        "microsoft/trocr-base-handwritten", size=384, resample=2,
+        image_mean=[0.485, 0.456, 0.406], image_std=[0.229, 0.224, 0.225])
+
     if FULL_TRAINING:
         vision_hf_model = 'facebook/deit-base-distilled-patch16-384'
         nlp_hf_model = "hfl/chinese-macbert-base"
@@ -52,15 +56,11 @@ def load_model():
         model = VisionEncoderDecoderModel.from_encoder_decoder_pretrained(
             vision_hf_model, nlp_hf_model)
 
-        processor = TrOCRProcessor.from_pretrained(
-            "microsoft/trocr-base-handwritten", size=384, resample=2,
-            image_mean=[0.485, 0.456, 0.406], image_std=[0.229, 0.224, 0.225])
-
         new_words = ["“", "”", "‘", "’"]  # Add new words
         tokenizer = AutoTokenizer.from_pretrained(nlp_hf_model)
         tokenizer.add_tokens(new_tokens=new_words)
     else:
-        trocr_model = 'checkpoints/checkpoint-308000'
+        trocr_model = 'models/tang-syn-5.0-online-epoch-1'
         model = VisionEncoderDecoderModel.from_pretrained(trocr_model)
         tokenizer = AutoTokenizer.from_pretrained(trocr_model)
 
@@ -116,20 +116,37 @@ class OCRDataset(Dataset):
         if mode == "online":
             self.df = None
             self.df_len = 0
-        else:
+        elif mode in ("train", "eval"):
             self.df = self.build_df()
             self.df_len = len(self.df)
 
-        if mode == "train" or mode == "online":
+        if mode in ("train", "online"):
             self.file_handles = self.load_texts()
-            self.arbitrary_len = 16000000
+            self.arbitrary_len = 12800000
 
     def __len__(self):
         return self.arbitrary_len
 
     def __getitem__(self, idx):
 
-        # Thirty percent of the time, use existing dataset
+        image, text = self.get_image_and_text(idx)
+
+        pixel_values = self.processor(image, return_tensors="pt").pixel_values
+
+        labels = self.tokenizer(text,
+                                padding="max_length",
+                                truncation=True,
+                                max_length=self.max_target_length)
+
+        encoding = {
+            "pixel_values": pixel_values.squeeze(),
+            "labels": torch.tensor(labels.input_ids),
+            "decoder_attention_mask": torch.tensor(labels.attention_mask),
+        }
+        return encoding
+
+    def get_image_and_text(self, idx):
+
         if idx < self.df_len:
             text = self.df['text'][idx]
             # get file name + text
@@ -146,27 +163,10 @@ class OCRDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        pixel_values = self.processor(image, return_tensors="pt").pixel_values
-
         # Remove spaces from text, as only data from tang-syn 1.0 had spaces before text
         text = text.strip()
 
-        labels = self.tokenizer(text,
-                                padding="max_length",
-                                truncation=True,
-                                max_length=self.max_target_length).input_ids
-
-        # important: make sure that PAD tokens are ignored by the loss function
-        labels = [
-            label if label != self.tokenizer.pad_token_id else -100
-            for label in labels
-        ]
-
-        encoding = {
-            "pixel_values": pixel_values.squeeze(),
-            "labels": torch.tensor(labels)
-        }
-        return encoding
+        return image, text
 
     def build_df(self):
         li = []
@@ -252,7 +252,8 @@ def load_datasets(processor, tokenizer):
                                tokenizer=tokenizer,
                                processor=processor,
                                mode="online",
-                               transform=build_data_aug(64, "train"),
+                               transform=build_data_aug(
+                                   height=64, mode="train", resizepad=False),
                                max_target_length=MAX_LENGTH)
 
     # Define the number of samples to keep in eval dataset
@@ -262,7 +263,8 @@ def load_datasets(processor, tokenizer):
                                tokenizer=tokenizer,
                                processor=processor,
                                mode="eval",
-                               transform=None,
+                               transform=build_data_aug(
+                                   height=64, mode="eval", resizepad=False),
                                max_target_length=MAX_LENGTH)
 
     niandai_dataset = EvalDataset(dataset_dir=dataset_dir,
@@ -270,7 +272,8 @@ def load_datasets(processor, tokenizer):
                                   tokenizer=tokenizer,
                                   processor=processor,
                                   mode="eval",
-                                  transform=None,
+                                  transform=build_data_aug(
+                                      height=64, mode="eval", resizepad=False),
                                   max_target_length=MAX_LENGTH)
 
     # Create a random subset of the dataset
@@ -294,8 +297,6 @@ def build_metrics(tokenizer):
         pred_ids = pred.predictions
 
         pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-
-        labels_ids[labels_ids == -100] = tokenizer.pad_token_id
         labels_str = tokenizer.batch_decode(labels_ids,
                                             skip_special_tokens=True)
 
@@ -352,7 +353,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         predict_with_generate=True,
         per_device_train_batch_size=24,
         per_device_eval_batch_size=48,
-        gradient_accumulation_steps=8,
+        gradient_accumulation_steps=4,
         # gradient_checkpointing=True,
         num_train_epochs=1,
         fp16=True,
@@ -368,13 +369,13 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         evaluation_strategy="steps",
         eval_steps=100,
         resume_from_checkpoint="./checkpoints/",
-        dataloader_num_workers=4,
+        dataloader_num_workers=8,
         optim="adamw_torch",
-        lr_scheduler_type="polynomial",
-        warmup_steps=768,
-        weight_decay=0.01,
+        lr_scheduler_type="cosine",
+        # warmup_steps=1024,
+        # weight_decay=1e-2,
         load_best_model_at_end=True,
-        metric_for_best_model="hwdb_cer",
+        metric_for_best_model="hwdb_loss",
         greater_is_better=False,
         dataloader_pin_memory=True,
     )
