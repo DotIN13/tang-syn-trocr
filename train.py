@@ -24,6 +24,7 @@ from transformers import get_scheduler, get_polynomial_decay_schedule_with_warmu
 
 from data_aug_v2 import build_data_aug
 from tang_syn import synthesize
+from tang_syn_config import TextlineSynthesisConfig, preload_fonts, load_default_config
 
 FULL_TRAINING = True
 RESUME = False
@@ -42,13 +43,13 @@ def load_model():
     tokenizer = None
 
     processor = TrOCRProcessor.from_pretrained(
-        "microsoft/trocr-base-handwritten", size=384, resample=2,
+        "microsoft/trocr-base-handwritten", size=224, resample=3,
         image_mean=[0.485, 0.456, 0.406], image_std=[0.229, 0.224, 0.225])
 
     if FULL_TRAINING:
-        vision_hf_model = 'facebook/deit-base-distilled-patch16-384'
-        nlp_hf_model = "hfl/chinese-macbert-base"
-        # nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
+        vision_hf_model = 'facebook/deit-small-distilled-patch16-224'
+        # nlp_hf_model = "hfl/chinese-macbert-base"
+        nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
 
         # Reference: https://github.com/huggingface/transformers/issues/15823
         # initialize the encoder from a pretrained ViT and the decoder from a pretrained BERT model.
@@ -69,8 +70,17 @@ def load_model():
         model.config.decoder_start_token_id = tokenizer.cls_token_id
         model.config.pad_token_id = tokenizer.pad_token_id
 
-        model.decoder.resize_token_embeddings(len(tokenizer))
-        model.config.vocab_size = model.config.decoder.vocab_size
+        new_embeddings = model.decoder.resize_token_embeddings(
+            len(tokenizer), pad_to_multiple_of=8)
+
+        new_vocab_size = new_embeddings.weight.shape[0]
+
+        print(f"New vocab size: {new_vocab_size}")
+
+        model.vocab_size = new_vocab_size
+        model.config.vocab_size = new_vocab_size
+        model.config.decoder.vocab_size = new_vocab_size
+        model.decoder.config.vocab_size = new_vocab_size
 
         # set beam search parameters
         model.config.eos_token_id = tokenizer.sep_token_id
@@ -83,9 +93,28 @@ def load_model():
     return model, processor, tokenizer
 
 
-def random_slice(s, min_length=1, max_length=MAX_LENGTH):
+def random_slice(s, min_length=1, max_length=MAX_LENGTH, tokenizer=None):
+    assert (min_length <= max_length)
+
+    res = tokenizer(s, return_offsets_mapping=True)
+    tokens = res["input_ids"][1:-1]
+    offsets = res["offset_mapping"][1:-1]
+
     length = random.randint(min_length, max_length)
 
+    if len(tokens) <= length:
+        return s
+
+    start = random.randint(0, len(tokens) - length)
+    end = start + length - 1
+
+    start_index = offsets[start][0]
+    end_index = offsets[end][-1]
+
+    return s[start_index: end_index]
+
+
+def candidate_slice(s, length=512):
     if len(s) <= length:
         return s
 
@@ -103,7 +132,9 @@ class OCRDataset(Dataset):
                  tokenizer,
                  mode="train",
                  max_target_length=MAX_LENGTH,
-                 device=None):
+                 device=None,
+                 default_config=None,
+                 fonts=None):
         self.dataset_dir = dataset_dir
         self.labels_dir = labels_dir
         self.transform = transform
@@ -121,8 +152,10 @@ class OCRDataset(Dataset):
             self.df_len = len(self.df)
 
         if mode in ("train", "online"):
+            self.default_config = default_config
+            self.fonts = fonts
             self.file_handles = self.load_texts()
-            self.arbitrary_len = 12800000
+            self.arbitrary_len = 36000000
 
     def __len__(self):
         return self.arbitrary_len
@@ -131,17 +164,18 @@ class OCRDataset(Dataset):
 
         image, text = self.get_image_and_text(idx)
 
-        pixel_values = self.processor(image, return_tensors="pt").pixel_values
+        pixel_values = self.processor(image, return_tensors="pt")
 
         labels = self.tokenizer(text,
                                 padding="max_length",
                                 truncation=True,
-                                max_length=self.max_target_length)
+                                max_length=self.max_target_length,
+                                return_tensors="pt")
 
         encoding = {
-            "pixel_values": pixel_values.squeeze(),
-            "labels": torch.tensor(labels.input_ids),
-            "decoder_attention_mask": torch.tensor(labels.attention_mask),
+            "pixel_values": pixel_values.pixel_values.squeeze(),
+            "labels": labels.input_ids.squeeze(),
+            "decoder_attention_mask": labels.attention_mask.squeeze(),
         }
         return encoding
 
@@ -165,6 +199,7 @@ class OCRDataset(Dataset):
 
         # Remove spaces from text, as only data from tang-syn 1.0 had spaces before text
         text = text.strip()
+        # print(text) # Debug
 
         return image, text
 
@@ -184,8 +219,8 @@ class OCRDataset(Dataset):
 
     def load_texts(self):
         """Load text files"""
-        index_dir = path.join("dataset_syn", "indexes")
-        labels_dir = path.join("dataset_syn", "labels")
+        index_dir = path.join("dataset-syn", "indexes")
+        labels_dir = path.join("dataset-syn", "labels")
 
         file_handles = []
 
@@ -219,6 +254,7 @@ class OCRDataset(Dataset):
                     continue
 
                 line = lne.strip()
+                break
 
         if not (isinstance(line, str) and len(line) > 0):
             raise ValueError(f"Empty line at line {line_index} of {file_path}")
@@ -229,10 +265,25 @@ class OCRDataset(Dataset):
 
     def sample_and_synthesize(self):
         try:
-            text = self.sample_line_from_texts()
-            text = random_slice(text, max_length=self.max_target_length)
-            bgr_image = synthesize(text)
+            if os.environ.get("DEBUG") in ["1", "all", "syn"]:
+                text = "test"
+            else:
+                text = self.sample_line_from_texts()
+
+            # text = candidate_slice(text, length=512)
+            text = random_slice(
+                text, max_length=self.max_target_length, tokenizer=self.tokenizer)
+
+            syn_conf = TextlineSynthesisConfig.random_config(
+                default_config=self.default_config, **self.fonts)
+
+            if os.environ.get("DEBUG") in ["1", "all"]:
+                bgr_image = np.random.randint(
+                    0, 256, (64, 1024, 3), dtype=np.uint8)
+            else:
+                bgr_image = synthesize(text, syn_conf=syn_conf)
             return text, bgr_image
+
         except ValueError as sample_err:
             print(sample_err)
             return self.sample_and_synthesize()
@@ -247,6 +298,9 @@ class EvalDataset(OCRDataset):
 def load_datasets(processor, tokenizer):
     dataset_dir = 'dataset/data'
 
+    default_config = load_default_config()
+    fonts = preload_fonts(default_config)
+
     train_dataset = OCRDataset(dataset_dir=dataset_dir,
                                labels_dir="dataset/labels/train",
                                tokenizer=tokenizer,
@@ -254,7 +308,9 @@ def load_datasets(processor, tokenizer):
                                mode="online",
                                transform=build_data_aug(
                                    height=64, mode="train", resizepad=False),
-                               max_target_length=MAX_LENGTH)
+                               max_target_length=MAX_LENGTH,
+                               default_config=default_config,
+                               fonts=fonts)
 
     # Define the number of samples to keep in eval dataset
 
@@ -314,8 +370,8 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
     class TangSynTrainer(Seq2SeqTrainer):
         def create_scheduler(self, num_training_steps, optimizer=None):
             """
-            Setup the scheduler. The optimizer of the trainer must have been set up either before this method is called or
-            passed as an argument.
+            Setup the scheduler. The optimizer of the trainer must have been
+            set up either before this method is called or passed as an argument.
 
             Args:
                 num_training_steps (int): The number of training steps to do.
@@ -351,9 +407,9 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
 
     training_args = Seq2SeqTrainingArguments(
         predict_with_generate=True,
-        per_device_train_batch_size=24,
-        per_device_eval_batch_size=48,
-        gradient_accumulation_steps=4,
+        per_device_train_batch_size=180,
+        per_device_eval_batch_size=100,
+        # gradient_accumulation_steps=4,
         # gradient_checkpointing=True,
         num_train_epochs=1,
         fp16=True,
@@ -361,17 +417,17 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         output_dir="./checkpoints",
         logging_dir=logging_dir,
         logging_strategy="steps",
-        logging_steps=1,
+        logging_steps=100,
         log_level="info",
         save_strategy="steps",
         save_total_limit=8,
-        save_steps=100,
+        save_steps=2000,
         evaluation_strategy="steps",
-        eval_steps=100,
+        eval_steps=2000,
         resume_from_checkpoint="./checkpoints/",
         dataloader_num_workers=8,
         optim="adamw_torch",
-        lr_scheduler_type="cosine",
+        lr_scheduler_type="polynomial",
         # warmup_steps=1024,
         # weight_decay=1e-2,
         load_best_model_at_end=True,

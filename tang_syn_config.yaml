@@ -16,6 +16,8 @@ font_size: 30
 min_font_size: 25
 max_font_size: 35
 
+preload_all_fonts: true
+
 font_size_jittor_prob: 0.3
 font_size_jittor_std: 2.0
 
@@ -51,10 +53,10 @@ base_skew_max: 4.0
 skew_mean: 1.0
 skew_std_dev: 1.5
 
-elastic_transform_prob: 0.4
+elastic_transform_prob: 0.01
 elastic_alpha_ratio: 26
 elastic_sigma_ratio: 0.22
 
 simplified_fonts_only: true
 
-random_crossout_prob: 0.005
+random_crossout_prob: 0.001

@@ -247,8 +247,8 @@ class KeepOriginal(torch.nn.Module):
 def build_data_aug(height=64, width=1024, mode="train", resizepad=False, device="cpu"):
 
     aug_steps = [
-        transforms.ToImageTensor(),
-        transforms.ConvertImageDtype(dtype=torch.float64),
+        transforms.ToImage(),
+        transforms.ConvertImageDtype(dtype=torch.float32),
     ]
 
     if mode == 'train':
@@ -271,6 +271,6 @@ def build_data_aug(height=64, width=1024, mode="train", resizepad=False, device=
     if resizepad:
         aug_steps.append(ResizePad(width=width))
 
-    aug_steps.append(transforms.ToImagePIL())
+    aug_steps.append(transforms.ToPILImage())
 
     return transforms.Compose(aug_steps)

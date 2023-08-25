@@ -1,15 +1,18 @@
 import os
-import yaml
 import random
 import warnings
+from multiprocessing import get_context, cpu_count
 
-from tqdm import tqdm
+import yaml
 import numpy as np
 import pygame
+import pygame.freetype
 from fontTools.ttLib import TTFont
 
 warnings.filterwarnings('ignore', category=UserWarning,
                         module='fontTools.ttLib.tables')
+
+pygame.freetype.init()
 
 FALLBACK_FONT_NAMES = [
     "NotoSansCJKsc-VF.ttf",
@@ -37,6 +40,7 @@ FALLBACK_FONT_NAMES = [
 
 
 def can_render(cmaps, character):
+    """Check if a character can be rendered by a font."""
     for cmap in cmaps:
         if ord(character) in cmap:
             return True
@@ -45,12 +49,14 @@ def can_render(cmaps, character):
 
 
 def apply_color_jitter(color, std=15):
+    """Apply color jitter to a RGB color."""
     jittered_color = [max(
         0, min(255, c + int(np.random.normal(c, std)))) for c in color]
     return tuple(jittered_color)
 
 
 def jitter_color_triplets(triplet):
+    """Apply color jitter to a color triplet consisting of three RGB colors."""
     return tuple(apply_color_jitter(color) for color in triplet)
 
 
@@ -81,6 +87,7 @@ def generate_complementary_color(luminance):
 
 
 def generate_color_triplet():
+    """Generate a color triplet consisting of three RGB colors."""
     color1 = [random.randint(0, 255) for _ in range(3)]
     text_luminance = calculate_luminance(color1)
 
@@ -92,6 +99,7 @@ def generate_color_triplet():
 
 
 def pick_predefined_color_triplet():
+    """Randomly pick a predefined color triplet consisting of three RGB colors."""
     predefined_color_triplets = [
         # Black text, white background, black box
         ((0, 0, 0), (255, 255, 255), (0, 0, 0)),
@@ -109,9 +117,8 @@ def pick_predefined_color_triplet():
     return jitter_color_triplets(colors)
 
 
-def pygame_font(pth, size):
-    """
-    Creates a Pygame font object from a given font file path and size.
+def load_pygame_font(pth, size):
+    """Creates a Pygame font object from a given font file path and size.
 
     Args:
         pth (str): The file path of the font file.
@@ -124,8 +131,7 @@ def pygame_font(pth, size):
 
 
 def ttfont_cmaps(pth):
-    """
-    Given a font file path, returns a list of its character maps.
+    """Given a font file path, returns a list of its character maps.
 
     Args:
         pth (str): The file path of the font file.
@@ -137,39 +143,105 @@ def ttfont_cmaps(pth):
     return [table.cmap for table in ttfont["cmap"].tables]
 
 
+def valid_font(filename, config):
+    """Check if a font file is valid.
+
+    Args:
+        filename (str): The file name of the font file.
+        config (dict): The configuration dictionary.
+
+    Returns:
+        True if the font file is valid, False otherwise.
+    """
+
+    if not filename.lower().endswith((".ttf", ".otf")):
+        return False
+
+    if config["simplified_fonts_only"] and "FW" in filename:
+        return False
+
+    return True
+
+
+def process_font(file):
+    """Loads a font from a font file path.
+
+    Args:
+        file (str): The file path of the font file.
+
+    Returns:
+        A tuple containing a Pygame font object and a list of character maps.
+    """
+
+    pth = os.path.join("fonts", file)
+    return [pth, ttfont_cmaps(pth)]
+
+
+def load_fonts(font_paths, config, is_fallback=False):
+    """Loads fonts from a list of font file paths.
+
+    Args:
+        font_paths (list): A list of font file paths.
+        config (dict): The configuration dictionary.
+
+    Returns:
+        A list of tuples, each containing a Pygame font object and a list of character maps.
+    """
+
+    font_paths = list(filter(lambda pth: valid_font(pth, config), font_paths))
+
+    # fonts = [process_font(f, config, is_fallback) for f in tqdm(font_paths)]
+    # return list(filter(lambda x: x is not None, fonts))
+
+    processes = min(cpu_count(), 16)
+
+    with get_context("spawn").Pool(processes=processes) as pool:
+        results = pool.map(process_font, font_paths)
+
+    for item in results:
+        if config["preload_all_fonts"] or is_fallback:
+            item[0] = load_pygame_font(
+                item[0], config["font_size"])
+
+    return results
+
+
+def preload_fonts(config):
+    debug_fonts = os.environ.get("DEBUG") in ["1", "all", "fonts"]
+
+    fallback_fonts = load_fonts(
+        FALLBACK_FONT_NAMES, config, is_fallback=True)
+
+    print("Fallback fonts loaded.")
+
+    if debug_fonts:
+        fonts = fallback_fonts
+    else:
+        fonts = load_fonts(os.listdir("fonts"), config)
+
+    print(f"All fonts loaded: {len(fonts)}")
+
+    return {"fonts": fonts, "fallback_fonts": fallback_fonts}
+
+
+def load_default_config():
+    with open('tang_syn_config.yaml', 'r', encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    return config
+
+
 class TextlineSynthesisConfig:
-    with open('tang_syn_config.yaml', 'r') as f:
-        DEFAULT_CONFIG = yaml.safe_load(f)
 
-    pygame.freetype.init()
+    def __init__(self, config=None, default_config=None, fonts=None, fallback_fonts=None):
 
-    if os.environ.get("DEBUG"):
-        FALLBACK_FONT_NAMES = ["AaYueRanTi-2.ttf"]
+        if default_config is not None:
+            self.config = default_config.copy()
+        else:
+            self.config = load_default_config()
 
-    FALLBACK_FONTS = []
-    for fontname in tqdm(FALLBACK_FONT_NAMES):
-        pth = os.path.join("fonts", fontname)
-        FALLBACK_FONTS.append(
-            (pygame_font(pth, DEFAULT_CONFIG["font_size"]), ttfont_cmaps(pth)))
-
-    FONTS = []
-    for file in tqdm(os.listdir("fonts")):
-        if file.lower().endswith((".ttf", ".otf")):
-            if DEFAULT_CONFIG["simplified_fonts_only"] and "FW" in file:
-                continue
-
-            pth = os.path.join("fonts", file)
-            FONTS.append((pth, ttfont_cmaps(pth)))
-
-            if os.environ.get("DEBUG"):
-                break
-
-    print(f"Usable font: {len(FONTS)}")
-
-    def __init__(self, config={}):
-        self.config = self.DEFAULT_CONFIG.copy()
-
-        self.config.update(config)
+        if config is not None:
+            self.config.update(config)
 
         self.config["canvas_height"] = self.config["height"] - \
             self.config["margin_top"] - self.config["margin_bottom"]
@@ -178,9 +250,16 @@ class TextlineSynthesisConfig:
             self.config["font_size"] = min(
                 self.config["canvas_height"], self.config["font_size"])
 
-        font_pth, cmaps = random.choice(self.FONTS)
-        self.config["font"] = (pygame_font(
-            font_pth, self.config["font_size"]), cmaps)
+        self.config["fallback_fonts"] = fallback_fonts
+
+        # Choose the main font from the list
+        pygame_font, cmaps = random.choice(fonts)
+
+        if isinstance(pygame_font, str):
+            self.config["font"] = (load_pygame_font(
+                pygame_font, self.config["font_size"]), cmaps)
+        else:  # If the pygame font is already loaded
+            self.config["font"] = (pygame_font, cmaps)
 
     def __getattr__(self, item):
         if item in self.config:
@@ -189,8 +268,12 @@ class TextlineSynthesisConfig:
         raise AttributeError(f"Object has no attribute '{item}'")
 
     @classmethod
-    def random_config(cls):
-        random_config = cls.DEFAULT_CONFIG.copy()
+    def random_config(cls, default_config=None, **kwargs):
+
+        if default_config is not None:
+            random_config = default_config.copy()
+        else:
+            random_config = load_default_config()
 
         random_font_size = random_config.get("random_font_size", False)
         if random_font_size:
@@ -249,12 +332,14 @@ class TextlineSynthesisConfig:
                 -60, 60)
             random_config["random_crossout_thickness"] = random.randint(2, 3)
 
-        return cls(random_config)
+        return cls(random_config, default_config, **kwargs)
 
-    # Optional: add a method to modify configuration values
     def set_value(self, key, value):
+        """Set a value in the configuration dictionary."""
         self.config[key] = value
 
 
 if __name__ == "__main__":
-    TextlineSynthesisConfig.random_config()
+    default_config = load_default_config()
+    TextlineSynthesisConfig.random_config(
+        default_config=default_config, **preload_fonts(default_config))

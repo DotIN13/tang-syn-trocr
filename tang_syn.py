@@ -9,9 +9,7 @@ import pygame.freetype
 from scipy.ndimage import gaussian_filter, map_coordinates
 import matplotlib.pyplot as plt
 
-from tang_syn_config import TextlineSynthesisConfig, can_render
-
-# TODO: Add support for single quotes
+from tang_syn_config import can_render
 
 
 def is_chinese(text):
@@ -470,7 +468,7 @@ class TextlineSynthesis:
         font = None
         metric = None
 
-        fallback_fonts = TextlineSynthesisConfig.FALLBACK_FONTS
+        fallback_fonts = self.config.fallback_fonts
         fonts = fallback_fonts if fallback_only else [
             self.config.font, *fallback_fonts]
 
@@ -558,12 +556,15 @@ class TextlineSynthesis:
 
         return crossout_surface
 
+# For example:
+# syn_conf = TextlineSynthesisConfig.random_config(
+#     default_config=self.default_config, **self.fonts)
+# bgr_image = synthesize(text, syn_conf=syn_conf)
 
-def synthesize(message):
+def synthesize(message, syn_conf=None):
     if message == "":
         raise ValueError("Text must not be empty.")
 
-    syn_conf = TextlineSynthesisConfig.random_config()
     text_syn = TextlineSynthesis(syn_conf)
 
     surface = text_syn.draw_text(message)

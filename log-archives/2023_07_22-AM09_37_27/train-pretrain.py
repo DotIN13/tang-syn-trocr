@@ -184,8 +184,8 @@ class OCRDataset(Dataset):
 
     def load_texts(self):
         """Load text files"""
-        index_dir = path.join("dataset_syn", "indexes")
-        labels_dir = path.join("dataset_syn", "labels")
+        index_dir = path.join("dataset-syn", "indexes")
+        labels_dir = path.join("dataset-syn", "labels")
 
         file_handles = []
 
