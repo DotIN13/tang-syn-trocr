@@ -21,9 +21,9 @@ from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
 from transformers import default_data_collator
 from transformers import get_scheduler, get_polynomial_decay_schedule_with_warmup
 
-from data_aug_v2 import build_data_aug
+from lib.data_aug_v2 import build_data_aug
 from torch.utils.data import Subset
-from tang_syn import synthesize
+from lib.tang_syn import synthesize
 
 FULL_TRAINING = True
 RESUME = True

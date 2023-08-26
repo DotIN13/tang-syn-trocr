@@ -1,5 +1,5 @@
 # Height
-height: 32
+height: 64
 
 # Margin
 random_margin: true
@@ -12,9 +12,9 @@ margin_bottom: 10
 random_font_size: true
 limit_font_size: true
 
-font_size: 20
-min_font_size: 12
-max_font_size: 24
+font_size: 30
+min_font_size: 25
+max_font_size: 35
 
 preload_all_fonts: true
 
@@ -53,11 +53,10 @@ base_skew_max: 4.0
 skew_mean: 1.0
 skew_std_dev: 1.5
 
-elastic_transform_prob: 0.2
-elastic_alpha_ratio: 12
-elastic_sigma_ratio: 0.3
+elastic_transform_prob: 0.4
+elastic_alpha_ratio: 26
+elastic_sigma_ratio: 0.22
 
 simplified_fonts_only: true
 
 random_crossout_prob: 0.001
-mask_with_ellipses_prob: 0.2

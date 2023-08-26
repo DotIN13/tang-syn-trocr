@@ -9,7 +9,7 @@ import pygame.freetype
 from scipy.ndimage import gaussian_filter, map_coordinates
 import matplotlib.pyplot as plt
 
-from tang_syn_config import can_render
+from .tang_syn_config import can_render, complete_font
 
 
 def is_chinese(text):
@@ -83,47 +83,6 @@ def elastic_transform(image, alpha, sigma):
 
     distored_image = map_coordinates(image, indexes, order=1, mode="reflect")
     return distored_image.reshape(image.shape)
-
-
-def apply_mask_with_ellipses(image, text_color, num_ellipses=5):
-    # Assumes image is in BGR format and the last channel is Alpha (transparency)
-    bgr = image[:, :, :3]
-    alpha = image[:, :, 3]
-
-    # creates a white mask of the same size as the bgr
-    mask = np.ones(bgr.shape, dtype=bgr.dtype) * 255
-
-    h, w = bgr.shape[:2]
-
-    for _ in range(num_ellipses):
-        # Generate random parameters for the ellipse
-        center = (random.randint(0, w), random.randint(0, h))
-        # limiting the size of the ellipse to 1/4th of the image dimensions
-        axes = (random.randint(0, w // 4), random.randint(0, h))
-        angle = random.randint(0, 360)
-        startAngle = random.randint(0, 360)
-        # making sure the endAngle is greater than the startAngle
-        endAngle = random.randint(startAngle, startAngle + 180)
-        color = [random.randint(max(0, channel - 5),
-                                min(255, channel + 5))
-                 for channel in text_color]
-        thickness = -1
-
-        # Draw the ellipse on the mask
-        cv2.ellipse(mask, center, axes, angle, startAngle,
-                    endAngle, color, thickness)
-
-    # apply Gaussian blur to the mask to make the ellipses blend smoothly
-    mask = cv2.GaussianBlur(mask, (15, 15), 10)
-
-    # Only apply the mask to non-transparent (opaque) parts of the image
-    for i in range(3):  # For each BGR channel
-        bgr[:, :, i] = cv2.bitwise_and(bgr[:, :, i], mask[:, :, i], mask=alpha)
-
-    # Combine the BGR and alpha channel back together
-    image = cv2.merge([bgr, alpha])
-
-    return image
 
 
 def generate_smooth_sequence(n, min_val=0.0, max_val=1.0, sigma=0.5):
@@ -472,16 +431,17 @@ class TextlineSynthesis:
         fonts = fallback_fonts if fallback_only else [
             self.config.font, *fallback_fonts]
 
-        for (font, cmaps) in fonts:
+        for font in fonts:
 
-            if can_render(cmaps, char):
-                metric = font.get_metrics(
+            if can_render(font[1], char):
+                complete_font(font, self.config.font_size)
+                metric = font[0].get_metrics(
                     char, size=self.config.font_size)[0]
 
             if metric is not None:
                 break
 
-        return font, metric
+        return font[0], metric
 
     def generate_fonts_and_metrics(self, text):
         """Generate fonts and metrics list with fallbacks for the given text"""
@@ -496,7 +456,7 @@ class TextlineSynthesis:
 
             # If both the current font and the fallback fonts cannot be used to render the character, raise a ValueError
             if font is None or metric is None:
-                raise ValueError(f"Unable to generate font metrics for {text}")
+                raise ValueError(f"Unable to generate font metrics for {char} using {self.config.font[0].name}")
 
             fonts.append(font)
             metrics.append(metric)
@@ -556,6 +516,49 @@ class TextlineSynthesis:
 
         return crossout_surface
 
+    def apply_mask_with_ellipses(self, image, text_color, num_ellipses=5):
+        if not self.config.mask_with_ellipses:
+            return image
+
+        # Assumes image is in BGR format and the last channel is Alpha (transparency)
+        bgr = image[:, :, :3]
+        alpha = image[:, :, 3]
+
+        # creates a white mask of the same size as the bgr
+        mask = np.ones(bgr.shape, dtype=bgr.dtype) * 255
+
+        h, w = bgr.shape[:2]
+
+        for _ in range(num_ellipses):
+            # Generate random parameters for the ellipse
+            center = (random.randint(0, w), random.randint(0, h))
+            # limiting the size of the ellipse to 1/4th of the image dimensions
+            axes = (random.randint(0, w // 4), random.randint(0, h))
+            angle = random.randint(0, 360)
+            startAngle = random.randint(0, 360)
+            # making sure the endAngle is greater than the startAngle
+            endAngle = random.randint(startAngle, startAngle + 180)
+            color = [random.randint(max(0, channel - 5),
+                                    min(255, channel + 5))
+                    for channel in text_color]
+            thickness = -1
+
+            # Draw the ellipse on the mask
+            cv2.ellipse(mask, center, axes, angle, startAngle,
+                        endAngle, color, thickness)
+
+        # apply Gaussian blur to the mask to make the ellipses blend smoothly
+        mask = cv2.GaussianBlur(mask, (15, 15), 10)
+
+        # Only apply the mask to non-transparent (opaque) parts of the image
+        for i in range(3):  # For each BGR channel
+            bgr[:, :, i] = cv2.bitwise_and(bgr[:, :, i], mask[:, :, i], mask=alpha)
+
+        # Combine the BGR and alpha channel back together
+        image = cv2.merge([bgr, alpha])
+
+        return image
+
 # For example:
 # syn_conf = TextlineSynthesisConfig.random_config(
 #     default_config=self.default_config, **self.fonts)
@@ -571,17 +574,18 @@ def synthesize(message, syn_conf=None):
     size = surface.get_size()
     fg = text_syn.surf2bgra(surface)
 
-    fg = apply_mask_with_ellipses(fg, syn_conf.text_color)
-
+    fg = text_syn.apply_mask_with_ellipses(fg, syn_conf.text_color)
     fg = text_syn.apply_elastic_transform(fg)
+
     bg = text_syn.build_bg(size)
+
     return alpha_blend_with_mask(fg[..., :3], bg, fg[..., 3])
 
 
 if __name__ == '__main__':
     from tqdm import tqdm
     from PIL import Image
-    from data_aug_v2 import build_data_aug
+    from lib.data_aug_v2 import build_data_aug
 
     # message = "有人Hello Pygame你的心里没有人心心"
     message = "你好 안녕 שָׁלוֹם 🎉🌟🙌😄"

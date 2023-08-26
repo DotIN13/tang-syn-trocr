@@ -1,18 +1,12 @@
-from datetime import datetime
 import os
-from os import path
-from glob import iglob
 import random
+from datetime import datetime
+from glob import iglob
 
 import pytz
-import cv2
 import numpy as np
-import pandas as pd
 import torch
-from torch.utils.data import Dataset, Subset
 import evaluate
-from tqdm import tqdm
-from PIL import Image
 
 # Override default transformers trainer_utils
 import lib.trainer_utils
@@ -22,15 +16,17 @@ from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
 from transformers import default_data_collator
 from transformers import get_scheduler, get_polynomial_decay_schedule_with_warmup
 
-from data_aug_v2 import build_data_aug
-from tang_syn import synthesize
-from tang_syn_config import TextlineSynthesisConfig, preload_fonts, load_default_config
+from lib.datasets import load_datasets
+from lib.tang_syn_config import preload_fonts, load_default_config
+from lib.datasets import list_text_files, load_texts
 
 FULL_TRAINING = True
 RESUME = False
 MAX_LENGTH = 64
 
 SHT = pytz.timezone("Asia/Shanghai")
+
+torch.backends.cuda.matmul.allow_tf32 = True
 
 
 def print_summary(result):
@@ -77,8 +73,6 @@ def load_model():
 
         print(f"New vocab size: {new_vocab_size}")
 
-        model.vocab_size = new_vocab_size
-        model.config.vocab_size = new_vocab_size
         model.config.decoder.vocab_size = new_vocab_size
         model.decoder.config.vocab_size = new_vocab_size
 
@@ -91,257 +85,6 @@ def load_model():
         model.config.num_beams = 4
 
     return model, processor, tokenizer
-
-
-def random_slice(s, min_length=1, max_length=MAX_LENGTH, tokenizer=None):
-    assert (min_length <= max_length)
-
-    res = tokenizer(s, return_offsets_mapping=True)
-    tokens = res["input_ids"][1:-1]
-    offsets = res["offset_mapping"][1:-1]
-
-    length = random.randint(min_length, max_length)
-
-    if len(tokens) <= length:
-        return s
-
-    start = random.randint(0, len(tokens) - length)
-    end = start + length - 1
-
-    start_index = offsets[start][0]
-    end_index = offsets[end][-1]
-
-    return s[start_index: end_index]
-
-
-def candidate_slice(s, length=512):
-    if len(s) <= length:
-        return s
-
-    start = random.randint(0, len(s) - length)
-    return s[start: start + length]
-
-
-class OCRDataset(Dataset):
-
-    def __init__(self,
-                 dataset_dir,
-                 labels_dir,
-                 transform,
-                 processor,
-                 tokenizer,
-                 mode="train",
-                 max_target_length=MAX_LENGTH,
-                 device=None,
-                 default_config=None,
-                 fonts=None):
-        self.dataset_dir = dataset_dir
-        self.labels_dir = labels_dir
-        self.transform = transform
-        self.device = device
-        self.processor = processor
-        self.mode = mode
-        self.max_target_length = max_target_length
-        self.tokenizer = tokenizer
-
-        if mode == "online":
-            self.df = None
-            self.df_len = 0
-        elif mode in ("train", "eval"):
-            self.df = self.build_df()
-            self.df_len = len(self.df)
-
-        if mode in ("train", "online"):
-            self.default_config = default_config
-            self.fonts = fonts
-            self.file_handles = self.load_texts()
-            self.arbitrary_len = 36000000
-
-    def __len__(self):
-        return self.arbitrary_len
-
-    def __getitem__(self, idx):
-
-        image, text = self.get_image_and_text(idx)
-
-        pixel_values = self.processor(image, return_tensors="pt")
-
-        labels = self.tokenizer(text,
-                                padding="max_length",
-                                truncation=True,
-                                max_length=self.max_target_length,
-                                return_tensors="pt")
-
-        encoding = {
-            "pixel_values": pixel_values.pixel_values.squeeze(),
-            "labels": labels.input_ids.squeeze(),
-            "decoder_attention_mask": labels.attention_mask.squeeze(),
-        }
-        return encoding
-
-    def get_image_and_text(self, idx):
-
-        if idx < self.df_len:
-            text = self.df['text'][idx]
-            # get file name + text
-            file_name = self.df["file_name"][idx]
-            # prepare image (i.e. resize + normalize)
-            image = Image.open(path.join(self.dataset_dir,
-                                         file_name)).convert("RGB")
-
-        else:
-            text, bgr_image = self.sample_and_synthesize()
-            rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
-            image = Image.fromarray(rgb_image)
-
-        if self.transform:
-            image = self.transform(image)
-
-        # Remove spaces from text, as only data from tang-syn 1.0 had spaces before text
-        text = text.strip()
-        # print(text) # Debug
-
-        return image, text
-
-    def build_df(self):
-        li = []
-        for file in tqdm(os.listdir(self.labels_dir)):
-            if not file.endswith(".tsv"):
-                continue
-
-            # print(f"Reading {file}")
-
-            li.append(
-                pd.read_table(path.join(self.labels_dir, file),
-                              names=["file_name", "text"]))
-
-        return pd.concat(li, axis=0, ignore_index=True)
-
-    def load_texts(self):
-        """Load text files"""
-        index_dir = path.join("dataset-syn", "indexes")
-        labels_dir = path.join("dataset-syn", "labels")
-
-        file_handles = []
-
-        for file in tqdm(os.listdir(index_dir)):
-            if not file.endswith(".tsv"):
-                continue
-
-            # print(f"Reading {file}")
-
-            with open(path.join(index_dir, file), "r", encoding="utf-8") as index_file:
-                for line in index_file:
-                    line = line.strip()
-                    if line:
-                        file, length = line.split("\t")
-                        file_path = path.join(labels_dir, file)
-                        file_handles.append((file_path, int(length)))
-
-        return file_handles
-
-    def sample_line_from_texts(self):
-        """Sample line from file handles"""
-        file_path, handle_len = random.choice(self.file_handles)
-        line_index = random.randint(0, handle_len - 1)
-
-        # print(file_path, line_index)
-        line = None
-
-        with open(file_path, "r", encoding="utf-8") as handle:
-            for i, lne in enumerate(handle):
-                if i != line_index:
-                    continue
-
-                line = lne.strip()
-                break
-
-        if not (isinstance(line, str) and len(line) > 0):
-            raise ValueError(f"Empty line at line {line_index} of {file_path}")
-
-        # print(
-        #     f"Empty line at line {line_index} of {file_path}, retrying.")
-        return line
-
-    def sample_and_synthesize(self):
-        try:
-            if os.environ.get("DEBUG") in ["1", "all", "syn"]:
-                text = "test"
-            else:
-                text = self.sample_line_from_texts()
-
-            # text = candidate_slice(text, length=512)
-            text = random_slice(
-                text, max_length=self.max_target_length, tokenizer=self.tokenizer)
-
-            syn_conf = TextlineSynthesisConfig.random_config(
-                default_config=self.default_config, **self.fonts)
-
-            if os.environ.get("DEBUG") in ["1", "all"]:
-                bgr_image = np.random.randint(
-                    0, 256, (64, 1024, 3), dtype=np.uint8)
-            else:
-                bgr_image = synthesize(text, syn_conf=syn_conf)
-            return text, bgr_image
-
-        except ValueError as sample_err:
-            print(sample_err)
-            return self.sample_and_synthesize()
-
-
-class EvalDataset(OCRDataset):
-
-    def __len__(self):
-        return len(self.df)
-
-
-def load_datasets(processor, tokenizer):
-    dataset_dir = 'dataset/data'
-
-    default_config = load_default_config()
-    fonts = preload_fonts(default_config)
-
-    train_dataset = OCRDataset(dataset_dir=dataset_dir,
-                               labels_dir="dataset/labels/train",
-                               tokenizer=tokenizer,
-                               processor=processor,
-                               mode="online",
-                               transform=build_data_aug(
-                                   height=64, mode="train", resizepad=False),
-                               max_target_length=MAX_LENGTH,
-                               default_config=default_config,
-                               fonts=fonts)
-
-    # Define the number of samples to keep in eval dataset
-
-    eval_dataset = EvalDataset(dataset_dir=dataset_dir,
-                               labels_dir="dataset/labels/test-ic13",
-                               tokenizer=tokenizer,
-                               processor=processor,
-                               mode="eval",
-                               transform=build_data_aug(
-                                   height=64, mode="eval", resizepad=False),
-                               max_target_length=MAX_LENGTH)
-
-    niandai_dataset = EvalDataset(dataset_dir=dataset_dir,
-                                  labels_dir="dataset/labels/test-niandai",
-                                  tokenizer=tokenizer,
-                                  processor=processor,
-                                  mode="eval",
-                                  transform=build_data_aug(
-                                      height=64, mode="eval", resizepad=False),
-                                  max_target_length=MAX_LENGTH)
-
-    # Create a random subset of the dataset
-    num_samples = 500
-    subset_indices = torch.randperm(len(eval_dataset))[:num_samples]
-    eval_dataset = Subset(eval_dataset, subset_indices.tolist())
-
-    print("Number of training examples:", len(train_dataset))
-    print("Number of validation examples:", len(
-        eval_dataset), len(niandai_dataset))
-
-    return train_dataset, {"hwdb": eval_dataset, "niandai": niandai_dataset}
 
 
 def build_metrics(tokenizer):
@@ -412,7 +155,7 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         # gradient_accumulation_steps=4,
         # gradient_checkpointing=True,
         num_train_epochs=1,
-        fp16=True,
+        bf16=True,
         learning_rate=5e-5,
         output_dir="./checkpoints",
         logging_dir=logging_dir,
@@ -421,11 +164,11 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         log_level="info",
         save_strategy="steps",
         save_total_limit=8,
-        save_steps=2000,
+        save_steps=1000,
         evaluation_strategy="steps",
-        eval_steps=2000,
+        eval_steps=1000,
         resume_from_checkpoint="./checkpoints/",
-        dataloader_num_workers=8,
+        dataloader_num_workers=24,
         optim="adamw_torch",
         lr_scheduler_type="polynomial",
         # warmup_steps=1024,
@@ -475,11 +218,34 @@ def save_checkpoint(trainer):
 
 
 if __name__ == "__main__":
+
+    # torch.set_num_threads(1)
+
+    # torch.multiprocessing.set_start_method('forkserver')
+    # torch.multiprocessing.set_forkserver_preload(
+    #     ["os", "random", "torch", "torchvision", "pandas", "numpy", "cv2",
+    #      "pygame", "pygame.freetype", "PIL", "scipy.ndimage", "kornia"])
+    # torch.multiprocessing.set_forkserver_preload(["train", "lib.datasets", "lib.tang_syn_config", "lib.data_aug_v2", "lib.tang_syn"])
+
+    # Load model
     model, processor, tokenizer = load_model()
     compute_metrics = build_metrics(tokenizer)
-    train_dataset, eval_dataset = load_datasets(processor, tokenizer)
-    trainer = init_trainer(model, tokenizer, compute_metrics, train_dataset,
-                           eval_dataset)
+
+    # Load fonts
+    default_config = load_default_config()
+    fonts = preload_fonts(default_config)
+
+    # Load texts
+    text_files = list_text_files()
+    texts = load_texts(text_files)
+
+    # Load datasets
+    train_dataset, eval_dataset = load_datasets(
+        processor, tokenizer, fonts=fonts, texts=texts, default_config=default_config)
+
+    trainer = init_trainer(
+        model, tokenizer, compute_metrics, train_dataset, eval_dataset)
+
     try:
         result = trainer.train(resume_from_checkpoint=RESUME)
         print_summary(result)

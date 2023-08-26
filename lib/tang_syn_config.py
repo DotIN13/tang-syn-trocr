@@ -140,7 +140,7 @@ def ttfont_cmaps(pth):
         A list of character maps for the font.
     """
     ttfont = TTFont(pth)
-    return [table.cmap for table in ttfont["cmap"].tables]
+    return [set(table.cmap.keys()) for table in ttfont["cmap"].tables]
 
 
 def valid_font(filename, config):
@@ -177,7 +177,27 @@ def process_font(file):
     return [pth, ttfont_cmaps(pth)]
 
 
-def load_fonts(font_paths, config, is_fallback=False):
+def complete_font(font, font_size):
+    """Given a font tuple, returns a font tuple with a Pygame font object and a list of character maps.
+
+    Args:
+        font (tuple): A tuple containing a font file path and a list of character maps.
+        config (dict): The configuration dictionary.
+
+    Returns:
+        A tuple containing a Pygame font object and a list of character maps.
+    """
+
+    pth = font[0]
+
+    if not isinstance(pth, str):
+        return font
+
+    font[0] = load_pygame_font(pth, font_size)
+    return font
+
+
+def load_fonts(font_paths, config):
     """Loads fonts from a list of font file paths.
 
     Args:
@@ -194,14 +214,14 @@ def load_fonts(font_paths, config, is_fallback=False):
     # return list(filter(lambda x: x is not None, fonts))
 
     processes = min(cpu_count(), 16)
+    processes = min(len(font_paths) // 4, processes)
 
     with get_context("spawn").Pool(processes=processes) as pool:
         results = pool.map(process_font, font_paths)
 
-    for item in results:
-        if config["preload_all_fonts"] or is_fallback:
-            item[0] = load_pygame_font(
-                item[0], config["font_size"])
+    if config["preload_all_fonts"]:
+        results = [complete_font(font, config["font_size"])
+                   for font in results]
 
     return results
 
@@ -209,17 +229,19 @@ def load_fonts(font_paths, config, is_fallback=False):
 def preload_fonts(config):
     debug_fonts = os.environ.get("DEBUG") in ["1", "all", "fonts"]
 
-    fallback_fonts = load_fonts(
-        FALLBACK_FONT_NAMES, config, is_fallback=True)
+    def load_fallback_fonts():
+        return load_fonts(FALLBACK_FONT_NAMES, config)
 
-    print("Fallback fonts loaded.")
+    fallback_fonts = load_fallback_fonts()
+
+    print("Fallback font cmaps loaded.")
 
     if debug_fonts:
-        fonts = fallback_fonts
+        fonts = load_fallback_fonts()
     else:
         fonts = load_fonts(os.listdir("fonts"), config)
 
-    print(f"All fonts loaded: {len(fonts)}")
+    print(f"All font cmaps loaded: {len(fonts)}")
 
     return {"fonts": fonts, "fallback_fonts": fallback_fonts}
 
@@ -253,13 +275,10 @@ class TextlineSynthesisConfig:
         self.config["fallback_fonts"] = fallback_fonts
 
         # Choose the main font from the list
-        pygame_font, cmaps = random.choice(fonts)
+        font = random.choice(fonts)
+        complete_font(font, self.config["font_size"])
 
-        if isinstance(pygame_font, str):
-            self.config["font"] = (load_pygame_font(
-                pygame_font, self.config["font_size"]), cmaps)
-        else:  # If the pygame font is already loaded
-            self.config["font"] = (pygame_font, cmaps)
+        self.config["font"] = font
 
     def __getattr__(self, item):
         if item in self.config:
@@ -271,68 +290,71 @@ class TextlineSynthesisConfig:
     def random_config(cls, default_config=None, **kwargs):
 
         if default_config is not None:
-            random_config = default_config.copy()
+            config = default_config.copy()
         else:
-            random_config = load_default_config()
+            config = load_default_config()
 
-        random_font_size = random_config.get("random_font_size", False)
+        random_font_size = config.get("random_font_size", False)
         if random_font_size:
-            random_config["font_size"] = random.randint(
-                random_config["min_font_size"], random_config["max_font_size"])
+            config["font_size"] = random.randint(
+                config["min_font_size"], config["max_font_size"])
 
-        random_config["font_size_jittor"] = (
-            random.random() < random_config["font_size_jittor_prob"])
+        config["font_size_jittor"] = (
+            random.random() < config["font_size_jittor_prob"])
 
-        random_config["font_weight_jittor"] = (
-            random.random() < random_config["font_weight_jittor_prob"])
+        config["font_weight_jittor"] = (
+            random.random() < config["font_weight_jittor_prob"])
 
-        random_margin = random_config.get("random_margin", False)
+        random_margin = config.get("random_margin", False)
         if random_margin is not None:
-            random_config['margin_left'] *= random.random()
-            random_config['margin_right'] *= random.random()
-            random_config['margin_top'] *= random.random()
-            random_config['margin_bottom'] *= random.random()
+            config['margin_left'] *= random.random()
+            config['margin_right'] *= random.random()
+            config['margin_top'] *= random.random()
+            config['margin_bottom'] *= random.random()
 
         # 30% of the time, apply random colors
         color_prob = random.random()
-        if color_prob < random_config.get("random_color_prob", 0.0):
+        if color_prob < config.get("random_color_prob", 0.0):
             colors = generate_color_triplet()
         else:
             colors = pick_predefined_color_triplet()
 
-        random_config['text_color'] = colors[0]
-        random_config['bg_color'] = colors[1]
-        random_config['box_color'] = colors[2]
+        config['text_color'] = colors[0]
+        config['bg_color'] = colors[1]
+        config['box_color'] = colors[2]
 
         # 20% of the time, apply graph grids
         # 30% of the time, apply chinese grids
-        random_config['graph_grid'] = False
-        random_config['chinese_grid'] = False
+        config['graph_grid'] = False
+        config['chinese_grid'] = False
         grid_prob = random.random()
         if grid_prob < 0.1:  # 10% chance of graph grid
-            random_config['graph_grid'] = True
+            config['graph_grid'] = True
         elif grid_prob < 0.3:  # 20% chance of Chinese grid
-            random_config['chinese_grid'] = True
+            config['chinese_grid'] = True
 
-        random_config['graph_grid_size'] = np.random.randint(
-            random_config["graph_grid_min_size"], random_config["graph_grid_max_size"])
+        config['graph_grid_size'] = np.random.randint(
+            config["graph_grid_min_size"], config["graph_grid_max_size"])
 
-        random_config['chinese_grid_padding'] = np.random.randint(
-            random_config['chinese_grid_min_padding'], random_config['chinese_grid_max_padding'])
+        config['chinese_grid_padding'] = np.random.randint(
+            config['chinese_grid_min_padding'], config['chinese_grid_max_padding'])
 
         # 40% of the time, apply elastic transform
         elastic_prob = random.random()
-        random_config['elastic_transform'] = elastic_prob < random_config.get(
+        config['elastic_transform'] = elastic_prob < config.get(
             'elastic_transform_prob', 0.0)
 
-        random_config["random_crossout"] = (
-            random.random() < random_config["random_crossout_prob"])
-        if random_config["random_crossout"]:
-            random_config["random_crossout_rotation"] = np.random.uniform(
+        config["random_crossout"] = (
+            random.random() < config["random_crossout_prob"])
+        if config["random_crossout"]:
+            config["random_crossout_rotation"] = np.random.uniform(
                 -60, 60)
-            random_config["random_crossout_thickness"] = random.randint(2, 3)
+            config["random_crossout_thickness"] = random.randint(2, 3)
 
-        return cls(random_config, default_config, **kwargs)
+        config["mask_with_ellipses"] = (
+            random.random() < config["mask_with_ellipses_prob"])
+
+        return cls(config, default_config, **kwargs)
 
     def set_value(self, key, value):
         """Set a value in the configuration dictionary."""
