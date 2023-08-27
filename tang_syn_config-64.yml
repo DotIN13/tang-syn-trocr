@@ -53,9 +53,11 @@ base_skew_max: 4.0
 skew_mean: 1.0
 skew_std_dev: 1.5
 
-elastic_transform_prob: 0.4
-elastic_alpha_ratio: 26
-elastic_sigma_ratio: 0.22
+mask_with_ellipses_prob: 0.3
+
+elastic_transform_prob: 0.3
+elastic_alpha: 3.6
+elastic_sigma: 21
 
 simplified_fonts_only: true
 

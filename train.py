@@ -3,6 +3,8 @@ import random
 from datetime import datetime
 from glob import iglob
 
+import yaml
+import cv2
 import pytz
 import numpy as np
 import torch
@@ -12,40 +14,70 @@ import evaluate
 import lib.trainer_utils
 
 from transformers import VisionEncoderDecoderModel, AutoTokenizer, TrOCRProcessor
-from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
+from transformers import Seq2SeqTrainingArguments
 from transformers import default_data_collator
-from transformers import get_scheduler, get_polynomial_decay_schedule_with_warmup
+from transformers.utils.import_utils import is_torch_bf16_gpu_available
 
 from lib.datasets import load_datasets
 from lib.tang_syn_config import preload_fonts, load_default_config
 from lib.datasets import list_text_files, load_texts
+from lib.tang_syn_trainer import TangSynTrainer
 
 FULL_TRAINING = True
-RESUME = False
+RESUME = True
 MAX_LENGTH = 64
-
-SHT = pytz.timezone("Asia/Shanghai")
 
 torch.backends.cuda.matmul.allow_tf32 = True
 
 
-def print_summary(result):
-    print(f"Time: {result.metrics['train_runtime']:.2f}")
-    print(f"Samples/second: {result.metrics['train_samples_per_second']:.2f}")
+def load_training_config(name):
+    """Load training config from yaml file."""
+    config = None
+    with open(os.path.join("configs", f"{name}.yml"), "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    training_args = config.get("training_args", {})
+
+    checkpoints_dir = os.path.join(
+        training_args.get("output_dir", "checkpoints"), name)
+    logging_dir = os.path.join(training_args.get("logging_dir", "logs"), name)
+
+    if not os.path.exists(checkpoints_dir):
+        os.makedirs(checkpoints_dir)
+
+    if not os.path.exists(logging_dir):
+        os.makedirs(logging_dir)
+
+    existing_logs = list(iglob(f"{logging_dir}/*/"))
+
+    if RESUME and len(existing_logs) > 0:
+        logging_dir = max(existing_logs, key=os.path.getctime)
+    else:
+        SHT = pytz.timezone("Asia/Shanghai")
+        logging_dir = f"{logging_dir}/{datetime.now().astimezone(SHT).strftime('%Y_%m_%d-%p%I_%M_%S')}"
+
+    training_args["output_dir"] = checkpoints_dir
+    training_args["resume_from_checkpoint"] = checkpoints_dir
+    training_args["logging_dir"] = logging_dir
+
+    return config
 
 
-def load_model():
+def load_model(training_config=None):
     model = None
     tokenizer = None
 
+    processor_args = training_config.get("processor_args", {})
+
     processor = TrOCRProcessor.from_pretrained(
-        "microsoft/trocr-base-handwritten", size=224, resample=3,
-        image_mean=[0.485, 0.456, 0.406], image_std=[0.229, 0.224, 0.225])
+        "microsoft/trocr-base-handwritten", **processor_args)
 
     if FULL_TRAINING:
-        vision_hf_model = 'facebook/deit-small-distilled-patch16-224'
-        # nlp_hf_model = "hfl/chinese-macbert-base"
-        nlp_hf_model = "Langboat/mengzi-bert-L6-H768"
+        vision_hf_model = training_config.get(
+            "encoder", 'facebook/deit-small-distilled-patch16-224')
+
+        nlp_hf_model = training_config.get(
+            "decoder", "Langboat/mengzi-bert-L6-H768")
 
         # Reference: https://github.com/huggingface/transformers/issues/15823
         # initialize the encoder from a pretrained ViT and the decoder from a pretrained BERT model.
@@ -108,86 +140,30 @@ def build_metrics(tokenizer):
 
 
 def init_trainer(model, tokenizer, compute_metrics, train_dataset,
-                 eval_dataset):
+                 eval_dataset, training_config=None, syn_config=None):
 
-    class TangSynTrainer(Seq2SeqTrainer):
-        def create_scheduler(self, num_training_steps, optimizer=None):
-            """
-            Setup the scheduler. The optimizer of the trainer must have been
-            set up either before this method is called or passed as an argument.
+    bf16 = is_torch_bf16_gpu_available()
+    fp16 = not bf16
 
-            Args:
-                num_training_steps (int): The number of training steps to do.
-            """
-            if self.lr_scheduler is None:
+    training_args = training_config.get("training_args", {})
 
-                if self.args.lr_scheduler_type == "polynomial":
-                    print("Using custom polynomial scheduler.")
-                    self.lr_scheduler = get_polynomial_decay_schedule_with_warmup(
-                        optimizer=self.optimizer if optimizer is None else optimizer,
-                        num_warmup_steps=self.args.get_warmup_steps(
-                            num_training_steps),
-                        num_training_steps=num_training_steps,
-                        power=1.0,
-                        lr_end=5e-6
-                    )
-                else:
-                    self.lr_scheduler = get_scheduler(
-                        self.args.lr_scheduler_type,
-                        optimizer=self.optimizer if optimizer is None else optimizer,
-                        num_warmup_steps=self.args.get_warmup_steps(
-                            num_training_steps),
-                        num_training_steps=num_training_steps,
-                    )
-            return self.lr_scheduler
-
-    logging_dir = None
-
-    if RESUME:
-        logging_dir = max(iglob("./logs/*/"), key=os.path.getctime)
-    else:
-        logging_dir = f"./logs/{datetime.now().astimezone(SHT).strftime('%Y_%m_%d-%p%I_%M_%S')}"
-
-    training_args = Seq2SeqTrainingArguments(
-        predict_with_generate=True,
-        per_device_train_batch_size=180,
-        per_device_eval_batch_size=100,
-        # gradient_accumulation_steps=4,
-        # gradient_checkpointing=True,
-        num_train_epochs=1,
-        bf16=True,
-        learning_rate=5e-5,
-        output_dir="./checkpoints",
-        logging_dir=logging_dir,
-        logging_strategy="steps",
-        logging_steps=100,
-        log_level="info",
-        save_strategy="steps",
-        save_total_limit=8,
-        save_steps=1000,
-        evaluation_strategy="steps",
-        eval_steps=1000,
-        resume_from_checkpoint="./checkpoints/",
-        dataloader_num_workers=24,
-        optim="adamw_torch",
-        lr_scheduler_type="polynomial",
-        # warmup_steps=1024,
-        # weight_decay=1e-2,
-        load_best_model_at_end=True,
-        metric_for_best_model="hwdb_loss",
-        greater_is_better=False,
-        dataloader_pin_memory=True,
+    args = Seq2SeqTrainingArguments(
+        bf16=bf16,
+        fp16=fp16,
+        **training_args
     )
 
     # instantiate trainer
     return TangSynTrainer(
         model=model,
         tokenizer=tokenizer,
-        args=training_args,
+        args=args,
         compute_metrics=compute_metrics,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=default_data_collator,
+        training_config=training_config,
+        syn_config=syn_config
     )
 
 
@@ -217,6 +193,11 @@ def save_checkpoint(trainer):
     torch.save(rng_states, os.path.join(output_dir, "rng_state.pth"))
 
 
+def print_summary(result):
+    print(f"Time: {result.metrics['train_runtime']:.2f}")
+    print(f"Samples/second: {result.metrics['train_samples_per_second']:.2f}")
+
+
 if __name__ == "__main__":
 
     # torch.set_num_threads(1)
@@ -227,12 +208,16 @@ if __name__ == "__main__":
     #      "pygame", "pygame.freetype", "PIL", "scipy.ndimage", "kornia"])
     # torch.multiprocessing.set_forkserver_preload(["train", "lib.datasets", "lib.tang_syn_config", "lib.data_aug_v2", "lib.tang_syn"])
 
+    cv2.setNumThreads(4)
+
+    training_config = load_training_config("deit-small-mengzi-l6-no-elastic")
+
     # Load model
-    model, processor, tokenizer = load_model()
+    model, processor, tokenizer = load_model(training_config)
     compute_metrics = build_metrics(tokenizer)
 
     # Load fonts
-    default_config = load_default_config()
+    default_config = load_default_config("tang_syn_config-64-no-elastic")
     fonts = preload_fonts(default_config)
 
     # Load texts
@@ -244,7 +229,8 @@ if __name__ == "__main__":
         processor, tokenizer, fonts=fonts, texts=texts, default_config=default_config)
 
     trainer = init_trainer(
-        model, tokenizer, compute_metrics, train_dataset, eval_dataset)
+        model, tokenizer, compute_metrics, train_dataset,
+        eval_dataset, training_config=training_config, syn_config=default_config)
 
     try:
         result = trainer.train(resume_from_checkpoint=RESUME)

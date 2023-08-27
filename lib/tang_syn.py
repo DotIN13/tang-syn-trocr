@@ -6,7 +6,6 @@ import numpy as np
 import pygame
 import pygame.surfarray as surfarray
 import pygame.freetype
-from scipy.ndimage import gaussian_filter, map_coordinates
 import matplotlib.pyplot as plt
 
 from .tang_syn_config import can_render, complete_font
@@ -64,25 +63,40 @@ def alpha_blend_with_mask(foreground, background, mask):  # modified func from l
     return cv2.add(foreground, background).astype(np.uint8)
 
 
-def elastic_transform(image, alpha, sigma):
-    """Perform the elastic deformation"""
-    random_state = np.random.RandomState(None)
+def elastic_transform(image, alpha, sigma, d=16):
+    # Padding
+    image = np.pad(image, ((d, d), (d, d), (0, 0)), 'edge')
 
-    shape = image.shape
-    dx = gaussian_filter((random_state.rand(*shape) * 2 - 1),
-                         sigma, mode="constant", cval=0) * alpha
-    dy = gaussian_filter((random_state.rand(*shape) * 2 - 1),
-                         sigma, mode="constant", cval=0) * alpha
-    dz = np.zeros_like(dx)
+    # Generate random fields
+    random_x = np.random.uniform(-1, 1, image.shape[:2]) * alpha
+    random_y = np.random.uniform(-1, 1, image.shape[:2]) * alpha
 
-    x, y, z = np.meshgrid(np.arange(shape[1]), np.arange(
-        shape[0]), np.arange(shape[2]))
-    indexes = (np.reshape(y+dy, (-1, 1)),
-               np.reshape(x+dx, (-1, 1)),
-               np.reshape(z+dz, (-1, 1)))
+    # Smooth the random fields
+    random_x = cv2.GaussianBlur(random_x, (sigma, sigma), 0)
+    random_y = cv2.GaussianBlur(random_y, (sigma, sigma), 0)
 
-    distored_image = map_coordinates(image, indexes, order=1, mode="reflect")
-    return distored_image.reshape(image.shape)
+    # Create coordinate grid
+    coords_x, coords_y = np.meshgrid(
+        np.arange(image.shape[1]), np.arange(image.shape[0]))
+
+    # Apply displacements
+    remap_x = np.clip(coords_x + random_x, 0,
+                      image.shape[1]-1).astype(np.float32)
+    remap_y = np.clip(coords_y + random_y, 0,
+                      image.shape[0]-1).astype(np.float32)
+
+    # Remap the image
+    output = cv2.remap(image, remap_x, remap_y,
+                      interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+    # Unpad the image
+    output = output[d: -d, d: -d, :]
+
+    # Normalize if necessary. This step can be omitted if not required.
+    # output = (output - np.mean(output)) / np.std(output) * 127 + 127
+    # output = np.clip(output, 0, 255).astype(np.uint8)
+
+    return output
 
 
 def generate_smooth_sequence(n, min_val=0.0, max_val=1.0, sigma=0.5):
@@ -171,7 +185,7 @@ class TextlineSynthesis:
                 char, self.config.text_color, (255, 255, 255, 0), size=font_size, style=style, rotation=skew)
 
         except pygame.error as err:
-            raise ValueError(f"{message} cannot be rendered.") from err
+            raise ValueError(f"{char} cannot be rendered using {font.name}") from err
 
         return text_surface
 
@@ -419,8 +433,8 @@ class TextlineSynthesis:
             return image
 
         # The image is in h, w, c format
-        alpha = image.shape[0] * self.config.elastic_alpha_ratio
-        sigma = image.shape[0] * self.config.elastic_sigma_ratio
+        alpha = self.config.elastic_alpha
+        sigma = self.config.elastic_sigma
         return elastic_transform(image, alpha, sigma)
 
     def generate_font_and_metric(self, char, fallback_only=False):
@@ -456,7 +470,8 @@ class TextlineSynthesis:
 
             # If both the current font and the fallback fonts cannot be used to render the character, raise a ValueError
             if font is None or metric is None:
-                raise ValueError(f"Unable to generate font metrics for {char} using {self.config.font[0].name}")
+                raise ValueError(
+                    f"Unable to generate font metrics for {char} using {self.config.font[0].name}")
 
             fonts.append(font)
             metrics.append(metric)
@@ -516,12 +531,12 @@ class TextlineSynthesis:
 
         return crossout_surface
 
-    def apply_mask_with_ellipses(self, image, text_color, num_ellipses=5):
+    def apply_mask_with_ellipses(self, image, text_color, num_ellipses=5, blend_factor=0.2):
         if not self.config.mask_with_ellipses:
             return image
 
         # Assumes image is in BGR format and the last channel is Alpha (transparency)
-        bgr = image[:, :, :3]
+        bgr = image[:, :, :3].copy()
         alpha = image[:, :, 3]
 
         # creates a white mask of the same size as the bgr
@@ -532,32 +547,33 @@ class TextlineSynthesis:
         for _ in range(num_ellipses):
             # Generate random parameters for the ellipse
             center = (random.randint(0, w), random.randint(0, h))
-            # limiting the size of the ellipse to 1/4th of the image dimensions
-            axes = (random.randint(0, w // 4), random.randint(0, h))
+            axes = (random.randint(0, w // 4), random.randint(0, h // 4))
             angle = random.randint(0, 360)
             startAngle = random.randint(0, 360)
-            # making sure the endAngle is greater than the startAngle
             endAngle = random.randint(startAngle, startAngle + 180)
-            color = [random.randint(max(0, channel - 5),
-                                    min(255, channel + 5))
-                    for channel in text_color]
+            color = [random.randint(
+                max(0, channel - 5), min(255, channel + 5)) for channel in text_color]
             thickness = -1
 
             # Draw the ellipse on the mask
             cv2.ellipse(mask, center, axes, angle, startAngle,
                         endAngle, color, thickness)
 
-        # apply Gaussian blur to the mask to make the ellipses blend smoothly
+        # Apply Gaussian blur to the mask to make the ellipses blend smoothly
         mask = cv2.GaussianBlur(mask, (15, 15), 10)
 
-        # Only apply the mask to non-transparent (opaque) parts of the image
-        for i in range(3):  # For each BGR channel
-            bgr[:, :, i] = cv2.bitwise_and(bgr[:, :, i], mask[:, :, i], mask=alpha)
+        # Create a blending mask for the non-transparent areas
+        blend_mask = cv2.bitwise_and(mask, mask, mask=alpha)
+
+        # Blend the image with the mask for only the BGR channels
+        bgr = cv2.addWeighted(bgr, 1 - blend_factor,
+                              blend_mask, blend_factor, 0)
 
         # Combine the BGR and alpha channel back together
         image = cv2.merge([bgr, alpha])
 
         return image
+
 
 # For example:
 # syn_conf = TextlineSynthesisConfig.random_config(

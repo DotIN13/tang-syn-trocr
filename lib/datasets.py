@@ -16,7 +16,6 @@ from .tang_syn_config import TextlineSynthesisConfig, load_pygame_font
 
 MAX_LENGTH = 64
 
-
 def random_slice(s, min_length=1, max_length=MAX_LENGTH, tokenizer=None):
     assert (min_length <= max_length)
 
@@ -267,7 +266,7 @@ class EvalDataset(OCRDataset):
         return len(self.df)
 
 
-def load_datasets(processor, tokenizer, fonts=None, texts=None, default_config=None):
+def load_datasets(processor, tokenizer, fonts=None, texts=None, default_config=None, debug=False):
     """Load train, eval datasets."""
 
     dataset_dir = 'dataset/data'
@@ -284,7 +283,8 @@ def load_datasets(processor, tokenizer, fonts=None, texts=None, default_config=N
                                max_target_length=MAX_LENGTH,
                                text_files=texts,
                                default_config=default_config,
-                               fonts=fonts)
+                               fonts=fonts,
+                               debug=debug)
 
     print("Initializing eval datasets.")
 

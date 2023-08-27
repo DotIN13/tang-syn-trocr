@@ -1,0 +1,37 @@
+training_args:
+  predict_with_generate: true
+  per_device_train_batch_size: 180
+  per_device_eval_batch_size: 100
+  # gradient_accumulation_steps: 4
+  # gradient_checkpointing: true
+  num_train_epochs: 1
+  learning_rate: 5.0e-5
+  output_dir: checkpoints
+  logging_dir: logs
+  resume_from_checkpoint: checkpoints
+  logging_strategy: steps
+  logging_steps: 100
+  log_level: info
+  save_strategy: steps
+  save_total_limit: 8
+  save_steps: 1000
+  evaluation_strategy: steps
+  eval_steps: 1000
+  dataloader_num_workers: 18
+  optim: adamw_torch
+  lr_scheduler_type: polynomial
+  # warmup_steps: 1024
+  # weight_decay: 1e-2
+  load_best_model_at_end: true
+  metric_for_best_model: hwdb_loss
+  greater_is_better: false
+  dataloader_pin_memory: true
+
+processor_args:
+  size: 224
+  resample: 3
+  image_mean: [0.485, 0.456, 0.406]
+  image_std: [0.229, 0.224, 0.225]
+
+encoder: facebook/deit-small-distilled-patch16-224
+decoder: Langboat/mengzi-bert-L6-H768

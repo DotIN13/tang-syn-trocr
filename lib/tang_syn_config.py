@@ -246,8 +246,11 @@ def preload_fonts(config):
     return {"fonts": fonts, "fallback_fonts": fallback_fonts}
 
 
-def load_default_config():
-    with open('tang_syn_config.yaml', 'r', encoding="utf-8") as f:
+def load_default_config(name=None):
+
+    name = name or "tang_syn_config-64"
+
+    with open(f'{name}.yml', 'r', encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     return config
