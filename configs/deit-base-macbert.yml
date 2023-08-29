@@ -35,3 +35,8 @@ processor_args:
 
 encoder: facebook/deit-small-distilled-patch16-384
 decoder: hfl/chinese-macbert-base
+
+datasets:
+  train:
+    mode: online
+    arbitrary_size: 36000000

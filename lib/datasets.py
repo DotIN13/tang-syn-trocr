@@ -16,6 +16,7 @@ from .tang_syn_config import TextlineSynthesisConfig, load_pygame_font
 
 MAX_LENGTH = 64
 
+
 def random_slice(s, min_length=1, max_length=MAX_LENGTH, tokenizer=None):
     assert (min_length <= max_length)
 
@@ -117,9 +118,10 @@ class OCRDataset(Dataset):
                  max_target_length=MAX_LENGTH,
                  device=None,
                  text_files=None,
-                 default_config=None,
+                 syn_config=None,
                  fonts=None,
-                 debug=False):
+                 debug=False,
+                 arbitrary_size=6400000):
 
         self.dataset_dir = dataset_dir
         self.labels_dir = labels_dir
@@ -139,15 +141,15 @@ class OCRDataset(Dataset):
             self.df_len = len(self.df)
 
         if mode in ("train", "online"):
-            self.default_config = default_config
+            self.syn_config = syn_config
             self.fonts = fonts
             self.texts = text_files
             # self.load_fonts()
             # self.load_texts()
-            self.arbitrary_len = 36000000
+            self.arbitrary_size = arbitrary_size
 
     def __len__(self):
-        return self.arbitrary_len
+        return self.arbitrary_size
 
     def __getitem__(self, idx):
 
@@ -214,11 +216,11 @@ class OCRDataset(Dataset):
 
         for font in self.fonts["fonts"]:
             font[0] = load_pygame_font(
-                font[0], self.default_config["font_size"])
+                font[0], self.syn_config["font_size"])
 
         for font in self.fonts["fallback_fonts"]:
             font[0] = load_pygame_font(
-                font[0], self.default_config["font_size"])
+                font[0], self.syn_config["font_size"])
 
         print("Pygame fonts loaded.")
 
@@ -245,7 +247,7 @@ class OCRDataset(Dataset):
                 text, max_length=self.max_target_length, tokenizer=self.tokenizer)
 
             syn_conf = TextlineSynthesisConfig.random_config(
-                default_config=self.default_config, **self.fonts)
+                syn_config=self.syn_config, **self.fonts)
 
             if os.environ.get("DEBUG") in ["1", "all", "syn"]:
                 bgr_image = np.random.randint(
@@ -266,10 +268,15 @@ class EvalDataset(OCRDataset):
         return len(self.df)
 
 
-def load_datasets(processor, tokenizer, fonts=None, texts=None, default_config=None, debug=False):
+def load_datasets(processor, tokenizer, fonts=None, texts=None, training_config=None, debug=False):
     """Load train, eval datasets."""
 
     dataset_dir = 'dataset/data'
+
+    syn_config = training_config.get("syn_config")
+
+    datasets_config = training_config.get("datasets", {})
+    train_dataset_config = datasets_config.get("train", {})
 
     print("Initializing training dataset.")
 
@@ -277,13 +284,15 @@ def load_datasets(processor, tokenizer, fonts=None, texts=None, default_config=N
                                labels_dir="dataset/labels/train",
                                tokenizer=tokenizer,
                                processor=processor,
-                               mode="online",
+                               mode=train_dataset_config.get("mode", "train"),
                                transform=build_data_aug(
                                    height=64, mode="train", resizepad=False),
                                max_target_length=MAX_LENGTH,
                                text_files=texts,
-                               default_config=default_config,
+                               syn_config=syn_config,
                                fonts=fonts,
+                               arbitrary_size=train_dataset_config.get(
+                                   "arbitrary_size", 6400000),
                                debug=debug)
 
     print("Initializing eval datasets.")

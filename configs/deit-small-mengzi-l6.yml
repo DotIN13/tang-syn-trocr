@@ -35,3 +35,8 @@ processor_args:
 
 encoder: facebook/deit-small-distilled-patch16-224
 decoder: Langboat/mengzi-bert-L6-H768
+
+datasets:
+  train:
+    mode: online
+    arbitrary_size: 36000000

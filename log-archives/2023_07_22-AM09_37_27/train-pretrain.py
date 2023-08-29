@@ -122,10 +122,10 @@ class OCRDataset(Dataset):
 
         if mode == "train" or mode == "online":
             self.file_handles = self.load_texts()
-            self.arbitrary_len = 16000000
+            self.arbitrary_size = 16000000
 
     def __len__(self):
-        return self.arbitrary_len
+        return self.arbitrary_size
 
     def __getitem__(self, idx):
 

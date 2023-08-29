@@ -5,7 +5,7 @@ training_args:
   # gradient_accumulation_steps: 4
   # gradient_checkpointing: true
   num_train_epochs: 1
-  learning_rate: 5.0e-5
+  learning_rate: 1.0e-5
   output_dir: checkpoints
   logging_dir: logs
   resume_from_checkpoint: checkpoints
@@ -20,10 +20,10 @@ training_args:
   dataloader_num_workers: 18
   optim: adamw_torch
   lr_scheduler_type: polynomial
-  # warmup_steps: 1024
+  warmup_steps: 1024
   # weight_decay: 1e-2
   load_best_model_at_end: true
-  metric_for_best_model: hwdb_loss
+  metric_for_best_model: hwdb_cer
   greater_is_better: false
   dataloader_pin_memory: true
 
@@ -38,5 +38,5 @@ decoder: Langboat/mengzi-bert-L6-H768
 
 datasets:
   train:
-    mode: online
-    arbitrary_size: 36000000
+    mode: train
+    arbitrary_size: 6400000

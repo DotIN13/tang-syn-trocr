@@ -19,23 +19,22 @@ from transformers import default_data_collator
 from transformers.utils.import_utils import is_torch_bf16_gpu_available
 
 from lib.datasets import load_datasets
-from lib.tang_syn_config import preload_fonts, load_default_config
+from lib.tang_syn_config import preload_fonts, load_syn_config
 from lib.datasets import list_text_files, load_texts
 from lib.tang_syn_trainer import TangSynTrainer
 
-FULL_TRAINING = True
-RESUME = True
+FULL_TRAINING = False
+RESUME = False
+LOAD_CHECKPOINT = "checkpoints/deit-small-mengzi-l6/checkpoint-200000"
 MAX_LENGTH = 64
+
+TRAINING_CONFIG = "deit-small-mengzi-l6-finetune"
+SYN_CONFIG = "tang_syn_config-64"
 
 torch.backends.cuda.matmul.allow_tf32 = True
 
 
-def load_training_config(name):
-    """Load training config from yaml file."""
-    config = None
-    with open(os.path.join("configs", f"{name}.yml"), "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-
+def build_training_args(config, name):
     training_args = config.get("training_args", {})
 
     checkpoints_dir = os.path.join(
@@ -59,6 +58,22 @@ def load_training_config(name):
     training_args["output_dir"] = checkpoints_dir
     training_args["resume_from_checkpoint"] = checkpoints_dir
     training_args["logging_dir"] = logging_dir
+
+
+def load_training_config(name, syn_config_name=None):
+    """Load training config from yaml file."""
+
+    config = None
+    with open(os.path.join("configs", f"{name}.yml"), "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    if syn_config_name is None and "syn_config" not in config:
+        raise ValueError("Synthesis config is required.")
+
+    build_training_args(config, name)
+
+    if syn_config_name:
+        config["syn_config"] = load_syn_config(syn_config_name)
 
     return config
 
@@ -89,7 +104,7 @@ def load_model(training_config=None):
         tokenizer = AutoTokenizer.from_pretrained(nlp_hf_model)
         tokenizer.add_tokens(new_tokens=new_words)
     else:
-        trocr_model = 'models/tang-syn-5.0-online-epoch-1'
+        trocr_model = LOAD_CHECKPOINT
         model = VisionEncoderDecoderModel.from_pretrained(trocr_model)
         tokenizer = AutoTokenizer.from_pretrained(trocr_model)
 
@@ -140,7 +155,7 @@ def build_metrics(tokenizer):
 
 
 def init_trainer(model, tokenizer, compute_metrics, train_dataset,
-                 eval_dataset, training_config=None, syn_config=None):
+                 eval_dataset, training_config=None):
 
     bf16 = is_torch_bf16_gpu_available()
     fp16 = not bf16
@@ -163,7 +178,6 @@ def init_trainer(model, tokenizer, compute_metrics, train_dataset,
         eval_dataset=eval_dataset,
         data_collator=default_data_collator,
         training_config=training_config,
-        syn_config=syn_config
     )
 
 
@@ -210,15 +224,18 @@ if __name__ == "__main__":
 
     cv2.setNumThreads(4)
 
-    training_config = load_training_config("deit-small-mengzi-l6-no-elastic")
+    training_config = load_training_config(
+        TRAINING_CONFIG,
+        syn_config_name=SYN_CONFIG)
+
+    syn_config = training_config.get("syn_config")
 
     # Load model
     model, processor, tokenizer = load_model(training_config)
     compute_metrics = build_metrics(tokenizer)
 
     # Load fonts
-    default_config = load_default_config("tang_syn_config-64-no-elastic")
-    fonts = preload_fonts(default_config)
+    fonts = preload_fonts(syn_config)
 
     # Load texts
     text_files = list_text_files()
@@ -226,11 +243,11 @@ if __name__ == "__main__":
 
     # Load datasets
     train_dataset, eval_dataset = load_datasets(
-        processor, tokenizer, fonts=fonts, texts=texts, default_config=default_config)
+        processor, tokenizer, fonts=fonts, texts=texts, training_config=training_config)
 
     trainer = init_trainer(
         model, tokenizer, compute_metrics, train_dataset,
-        eval_dataset, training_config=training_config, syn_config=default_config)
+        eval_dataset, training_config=training_config)
 
     try:
         result = trainer.train(resume_from_checkpoint=RESUME)

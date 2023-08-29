@@ -10,12 +10,10 @@ class TangSynTrainer(Seq2SeqTrainer):
     def __init__(
         self,
         training_config=None,
-        syn_config=None,
         **kwargs
     ):
         super().__init__(**kwargs)
         self.training_config = training_config
-        self.syn_config = syn_config
 
     def create_scheduler(self, num_training_steps, optimizer=None):
         """
@@ -43,12 +41,11 @@ class TangSynTrainer(Seq2SeqTrainer):
         return super().create_scheduler(num_training_steps, optimizer)
 
     def save_model(self, output_dir=None, _internal_call=False):
+        """Save model along with the training config"""
         if output_dir is None:
             output_dir = self.args.output_dir
 
         super().save_model(output_dir=output_dir, _internal_call=_internal_call)
 
         yaml.dump(self.training_config, open(
-            os.path.join(output_dir, "training_config.yaml"), "w", encoding="utf-8"))
-        yaml.dump(self.syn_config, open(
-            os.path.join(output_dir, "tang_syn_config.yaml"), "w", encoding="utf-8"))
+            os.path.join(output_dir, "training_config.yml"), "w", encoding="utf-8"))

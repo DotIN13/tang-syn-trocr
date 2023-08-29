@@ -246,7 +246,7 @@ def preload_fonts(config):
     return {"fonts": fonts, "fallback_fonts": fallback_fonts}
 
 
-def load_default_config(name=None):
+def load_syn_config(name=None):
 
     name = name or "tang_syn_config-64"
 
@@ -258,12 +258,9 @@ def load_default_config(name=None):
 
 class TextlineSynthesisConfig:
 
-    def __init__(self, config=None, default_config=None, fonts=None, fallback_fonts=None):
+    def __init__(self, config=None, syn_config=None, fonts=None, fallback_fonts=None):
 
-        if default_config is not None:
-            self.config = default_config.copy()
-        else:
-            self.config = load_default_config()
+        self.config = load_syn_config() if syn_config is None else syn_config.copy()
 
         if config is not None:
             self.config.update(config)
@@ -290,12 +287,9 @@ class TextlineSynthesisConfig:
         raise AttributeError(f"Object has no attribute '{item}'")
 
     @classmethod
-    def random_config(cls, default_config=None, **kwargs):
+    def random_config(cls, syn_config=None, **kwargs):
 
-        if default_config is not None:
-            config = default_config.copy()
-        else:
-            config = load_default_config()
+        config = load_syn_config() if syn_config is None else syn_config.copy()
 
         random_font_size = config.get("random_font_size", False)
         if random_font_size:
@@ -357,7 +351,7 @@ class TextlineSynthesisConfig:
         config["mask_with_ellipses"] = (
             random.random() < config["mask_with_ellipses_prob"])
 
-        return cls(config, default_config, **kwargs)
+        return cls(config, syn_config, **kwargs)
 
     def set_value(self, key, value):
         """Set a value in the configuration dictionary."""
@@ -365,6 +359,6 @@ class TextlineSynthesisConfig:
 
 
 if __name__ == "__main__":
-    default_config = load_default_config()
+    syn_config = load_syn_config()
     TextlineSynthesisConfig.random_config(
-        default_config=default_config, **preload_fonts(default_config))
+        syn_config=syn_config, **preload_fonts(syn_config))

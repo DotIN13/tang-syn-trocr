@@ -577,7 +577,7 @@ class TextlineSynthesis:
 
 # For example:
 # syn_conf = TextlineSynthesisConfig.random_config(
-#     default_config=self.default_config, **self.fonts)
+#     syn_config=self.syn_config, **self.fonts)
 # bgr_image = synthesize(text, syn_conf=syn_conf)
 
 def synthesize(message, syn_conf=None):
