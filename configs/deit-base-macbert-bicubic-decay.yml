@@ -2,7 +2,7 @@ training_args:
   predict_with_generate: true
   per_device_train_batch_size: 24
   per_device_eval_batch_size: 48
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 4
   # gradient_checkpointing: true
   num_train_epochs: 1
   learning_rate: 5.0e-5
@@ -17,11 +17,11 @@ training_args:
   save_steps: 200
   evaluation_strategy: steps
   eval_steps: 200
-  dataloader_num_workers: 7
+  dataloader_num_workers: 5
   optim: adamw_torch
   lr_scheduler_type: polynomial
-  # warmup_steps: 1024
-  # weight_decay: 1e-2
+  warmup_steps: 768
+  weight_decay: 1.0e-2
   load_best_model_at_end: true
   metric_for_best_model: hwdb_loss
   greater_is_better: false
@@ -39,4 +39,4 @@ decoder: hfl/chinese-macbert-base
 datasets:
   train:
     mode: online
-    arbitrary_size: 72000000
+    arbitrary_size: 16000000

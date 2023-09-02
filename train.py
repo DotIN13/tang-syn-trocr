@@ -23,12 +23,12 @@ from lib.tang_syn_config import preload_fonts, load_syn_config
 from lib.datasets import list_text_files, load_texts
 from lib.tang_syn_trainer import TangSynTrainer
 
-FULL_TRAINING = False
+FULL_TRAINING = True
 RESUME = False
-LOAD_CHECKPOINT = "checkpoints/deit-small-mengzi-l6/checkpoint-200000"
+LOAD_CHECKPOINT = None
 MAX_LENGTH = 64
 
-TRAINING_CONFIG = "deit-small-mengzi-l6-finetune"
+TRAINING_CONFIG = "deit-base-macbert-bicubic-decay"
 SYN_CONFIG = "tang_syn_config-64"
 
 torch.backends.cuda.matmul.allow_tf32 = True

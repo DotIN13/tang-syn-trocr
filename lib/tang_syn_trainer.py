@@ -46,6 +46,7 @@ class TangSynTrainer(Seq2SeqTrainer):
             output_dir = self.args.output_dir
 
         super().save_model(output_dir=output_dir, _internal_call=_internal_call)
-
-        yaml.dump(self.training_config, open(
-            os.path.join(output_dir, "training_config.yml"), "w", encoding="utf-8"))
+        
+        if os.path.exists(output_dir):
+            yaml.dump(self.training_config, open(
+                os.path.join(output_dir, "training_config.yml"), "w", encoding="utf-8"))

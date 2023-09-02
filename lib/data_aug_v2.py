@@ -246,9 +246,12 @@ class KeepOriginal(torch.nn.Module):
 
 def build_data_aug(height=64, width=1024, mode="train", resizepad=False, device="cpu"):
 
+    if mode == "eval" and not resizepad:
+        return None
+
     aug_steps = [
         transforms.ToImage(),
-        transforms.ConvertImageDtype(dtype=torch.float32),
+        transforms.ToDtype(dtype=torch.float32, scale=True),
     ]
 
     if mode == 'train':

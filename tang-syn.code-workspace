@@ -4,20 +4,8 @@
 			"path": "."
 		},
 		{
-			"path": "../Handright"
+			"path": "../datasets"
 		},
-		{
-			"path": "../poetry"
-		},
-		{
-			"path": "../trocr-hand"
-		},
-		{
-			"path": "../unilm/trocr"
-		},
-		{
-			"path": "../../trocr"
-		}
 	],
 	"settings": {}
 }
