@@ -13,22 +13,22 @@ random_font_size: true
 limit_font_size: true
 
 font_size: 30
-min_font_size: 25
+min_font_size: 16
 max_font_size: 35
 
 preload_all_fonts: true
 
 font_size_jittor_prob: 0.3
-font_size_jittor_std: 2.0
+font_size_jittor_std: 1.0
 
 font_weight_jittor_prob: 0.3
 
 random_color_prob: 0.3
-text_color: [255, 0, 0]
+text_color: [0, 0, 0]
 bg_color: [250, 250, 250]
 box_color: [0, 0, 0]
 
-graph_grid_prob: false
+graph_grid: false
 graph_grid_min_size: 10
 graph_grid_max_size: 20
 chinese_grid: false
@@ -56,8 +56,8 @@ skew_std_dev: 1.5
 mask_with_ellipses_prob: 0.4
 
 elastic_transform_prob: 0.4
-elastic_alpha: 3.6
-elastic_sigma: 21
+elastic_alpha: 5
+elastic_sigma: 12
 
 simplified_fonts_only: true
 

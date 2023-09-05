@@ -28,7 +28,7 @@ text_color: [255, 0, 0]
 bg_color: [250, 250, 250]
 box_color: [0, 0, 0]
 
-graph_grid_prob: false
+graph_grid: false
 graph_grid_min_size: 10
 graph_grid_max_size: 20
 chinese_grid: false

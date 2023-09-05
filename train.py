@@ -20,15 +20,14 @@ from transformers.utils.import_utils import is_torch_bf16_gpu_available
 
 from lib.datasets import load_datasets
 from lib.tang_syn_config import preload_fonts, load_syn_config
-from lib.datasets import list_text_files, load_texts
+from lib.datasets import list_text_files, load_texts, MODEL_MAX_LENGTH
 from lib.tang_syn_trainer import TangSynTrainer
 
 FULL_TRAINING = True
 RESUME = False
 LOAD_CHECKPOINT = None
-MAX_LENGTH = 64
 
-TRAINING_CONFIG = "deit-base-macbert-bicubic-decay"
+TRAINING_CONFIG = "deit-base-macbert-bicubic-checkpointing"
 SYN_CONFIG = "tang_syn_config-64"
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -122,10 +121,11 @@ def load_model(training_config=None):
 
         model.config.decoder.vocab_size = new_vocab_size
         model.decoder.config.vocab_size = new_vocab_size
+        model.config.vocab_size = new_vocab_size
 
         # set beam search parameters
         model.config.eos_token_id = tokenizer.sep_token_id
-        model.config.max_length = MAX_LENGTH
+        model.config.max_length = MODEL_MAX_LENGTH
         model.config.early_stopping = True
         model.config.no_repeat_ngram_size = 3
         model.config.length_penalty = 2.0
@@ -141,6 +141,8 @@ def build_metrics(tokenizer):
     def compute_metrics(pred):
         labels_ids = pred.label_ids
         pred_ids = pred.predictions
+
+        labels_ids[labels_ids == -100] = tokenizer.pad_token_id
 
         pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
         labels_str = tokenizer.batch_decode(labels_ids,

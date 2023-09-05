@@ -327,7 +327,7 @@ class TextlineSynthesisConfig:
         grid_prob = random.random()
         if grid_prob < 0.1:  # 10% chance of graph grid
             config['graph_grid'] = True
-        elif grid_prob < 0.3:  # 20% chance of Chinese grid
+        elif grid_prob < 0.2:  # 10% chance of Chinese grid
             config['chinese_grid'] = True
 
         config['graph_grid_size'] = np.random.randint(
@@ -340,6 +340,7 @@ class TextlineSynthesisConfig:
         elastic_prob = random.random()
         config['elastic_transform'] = elastic_prob < config.get(
             'elastic_transform_prob', 0.0)
+        config['elastic_alpha'] *= random.random()
 
         config["random_crossout"] = (
             random.random() < config["random_crossout_prob"])

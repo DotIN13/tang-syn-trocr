@@ -63,17 +63,29 @@ def alpha_blend_with_mask(foreground, background, mask):  # modified func from l
     return cv2.add(foreground, background).astype(np.uint8)
 
 
+def cv2_gaussian_filter(image, alpha, sigma):
+    # Calculate the kernel size, ensure it's odd, and cover significant part of Gaussian
+    ksize = int(8*sigma + 1)
+    ksize += 1 if ksize % 2 == 0 else 0  # Ensure it's odd
+
+    # Apply Gaussian blur
+    blurred = cv2.GaussianBlur(
+        image, (ksize, ksize), sigma, borderType=cv2.BORDER_CONSTANT)
+
+    return blurred * alpha
+
+
 def elastic_transform(image, alpha, sigma, d=16):
     # Padding
     image = np.pad(image, ((d, d), (d, d), (0, 0)), 'edge')
 
     # Generate random fields
-    random_x = np.random.uniform(-1, 1, image.shape[:2]) * alpha
-    random_y = np.random.uniform(-1, 1, image.shape[:2]) * alpha
+    random_x = np.random.uniform(-1, 1, image.shape[:2])
+    random_y = np.random.uniform(-1, 1, image.shape[:2])
 
     # Smooth the random fields
-    random_x = cv2.GaussianBlur(random_x, (sigma, sigma), 0)
-    random_y = cv2.GaussianBlur(random_y, (sigma, sigma), 0)
+    random_x = cv2_gaussian_filter(random_x, alpha, sigma)
+    random_y = cv2_gaussian_filter(random_y, alpha, sigma)
 
     # Create coordinate grid
     coords_x, coords_y = np.meshgrid(
@@ -87,7 +99,7 @@ def elastic_transform(image, alpha, sigma, d=16):
 
     # Remap the image
     output = cv2.remap(image, remap_x, remap_y,
-                      interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+                       interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
     # Unpad the image
     output = output[d: -d, d: -d, :]
@@ -185,7 +197,8 @@ class TextlineSynthesis:
                 char, self.config.text_color, (255, 255, 255, 0), size=font_size, style=style, rotation=skew)
 
         except pygame.error as err:
-            raise ValueError(f"{char} cannot be rendered using {font.name}") from err
+            raise ValueError(
+                f"{char} cannot be rendered using {font.name}") from err
 
         return text_surface
 

@@ -14,17 +14,19 @@ from .data_aug_v2 import build_data_aug
 from .tang_syn import synthesize
 from .tang_syn_config import TextlineSynthesisConfig, load_pygame_font
 
-MAX_LENGTH = 64
+TRAIN_MAX_LENGTH = 64
+MODEL_MAX_LENGTH = 64
 
 
-def random_slice(s, min_length=1, max_length=MAX_LENGTH, tokenizer=None):
+def random_slice(s, min_length=1, max_length=TRAIN_MAX_LENGTH, tokenizer=None):
     assert (min_length <= max_length)
 
     res = tokenizer(s, return_offsets_mapping=True)
     tokens = res["input_ids"][1:-1]
     offsets = res["offset_mapping"][1:-1]
 
-    length = random.randint(min_length, max_length)
+    # 2 is deducted for CLS and EOS
+    length = random.randint(min_length, max_length - 2)
 
     if len(tokens) <= length:
         return s
@@ -115,7 +117,7 @@ class OCRDataset(Dataset):
                  processor,
                  tokenizer,
                  mode="train",
-                 max_target_length=MAX_LENGTH,
+                 max_target_length=TRAIN_MAX_LENGTH,
                  device=None,
                  text_files=None,
                  syn_config=None,
@@ -163,13 +165,15 @@ class OCRDataset(Dataset):
         labels = self.tokenizer(text,
                                 padding="max_length",
                                 truncation=True,
-                                max_length=self.max_target_length,
-                                return_tensors="pt")
+                                max_length=self.max_target_length)
+
+        input_ids = [-100 if token == self.tokenizer.pad_token_id else token
+                     for token in labels.input_ids]
 
         encoding = {
             "pixel_values": pixel_values.pixel_values.squeeze(),
-            "labels": labels.input_ids.squeeze(),
-            "decoder_attention_mask": labels.attention_mask.squeeze(),
+            "labels": input_ids,
+            "decoder_attention_mask": labels.attention_mask,
         }
         return encoding
 
@@ -287,7 +291,7 @@ def load_datasets(processor, tokenizer, fonts=None, texts=None, training_config=
                                mode=train_dataset_config.get("mode", "train"),
                                transform=build_data_aug(
                                    height=64, mode="train", resizepad=False),
-                               max_target_length=MAX_LENGTH,
+                               max_target_length=TRAIN_MAX_LENGTH,
                                text_files=texts,
                                syn_config=syn_config,
                                fonts=fonts,
@@ -304,7 +308,7 @@ def load_datasets(processor, tokenizer, fonts=None, texts=None, training_config=
                                mode="eval",
                                transform=build_data_aug(
                                    height=64, mode="eval", resizepad=False),
-                               max_target_length=MAX_LENGTH)
+                               max_target_length=MODEL_MAX_LENGTH)
 
     niandai_dataset = EvalDataset(dataset_dir=dataset_dir,
                                   labels_dir="dataset/labels/test-niandai",
@@ -313,7 +317,7 @@ def load_datasets(processor, tokenizer, fonts=None, texts=None, training_config=
                                   mode="eval",
                                   transform=build_data_aug(
                                       height=64, mode="eval", resizepad=False),
-                                  max_target_length=MAX_LENGTH)
+                                  max_target_length=MODEL_MAX_LENGTH)
 
     # Define the number of samples to keep in eval dataset
     # Create a random subset of the dataset

@@ -29,7 +29,7 @@ gap_mean: 0.0
 gap_std_dev: 1.8
 graph_grid_max_size: 20
 graph_grid_min_size: 10
-graph_grid_prob: false
+graph_grid: false
 height: 64
 limit_font_size: true
 margin_bottom: 10
